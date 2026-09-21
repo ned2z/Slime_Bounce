@@ -7,6 +7,8 @@ interface Props {
   snap: Snapshot | null;
   cameraMode: "leader" | number;
   onCameraMode: (m: "leader" | number) => void;
+  cameraAngleMode: "auto" | "fix";
+  onToggleCameraAngle: () => void;
   zoneLabel: string;
   events: EventDef[];
   markers: ZoneMarker[];
@@ -14,6 +16,9 @@ interface Props {
   onGodMode: () => boolean;
   onResetCamera: () => void;
   raceStarted: boolean;
+  logs: { id: number; time: number; text: string; color: string }[];
+  isHost?: boolean;
+  myPlayerId?: number | null;
 }
 
 interface Bubble {
@@ -29,10 +34,25 @@ function fmt(t: number) {
   return `${m}:${s.toFixed(1).padStart(4, "0")}`;
 }
 
-export default function HUD({ players, snap, cameraMode, onCameraMode, zoneLabel, events, markers, onEnd, onGodMode, onResetCamera, raceStarted }: Props) {
-  const godLeft = snap?.godLeft ?? 0;
-  const godCd = snap?.godCooldown ?? 0;
-  const godReady = raceStarted && godLeft <= 0 && godCd <= 0;
+export default function HUD({
+  players,
+  snap,
+  cameraMode,
+  onCameraMode,
+  cameraAngleMode,
+  onToggleCameraAngle,
+  zoneLabel,
+  events,
+  markers,
+  onEnd,
+  onGodMode,
+  onResetCamera,
+  raceStarted,
+  logs,
+  isHost = true,
+  myPlayerId = null,
+}: Props) {
+  const guest = !isHost;
   const byId = useMemo(() => new Map(players.map((p) => [p.id, p])), [players]);
 
   // per-player best progress & rank
@@ -46,10 +66,10 @@ export default function HUD({ players, snap, cameraMode, onCameraMode, zoneLabel
     });
     const order = [...list].sort((a, b) => a.bestRank - b.bestRank || b.best - a.best);
     const rank = new Map(order.map((s, i) => [s.p.id, i]));
-    return { list, rank };
+    return { list, rank, order };
   }, [players, snap]);
 
-  // rank-up bubbles
+  // rank-up bubbles on progress bar
   const prevRank = useRef<Map<number, number>>(new Map());
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   useEffect(() => {
@@ -66,29 +86,41 @@ export default function HUD({ players, snap, cameraMode, onCameraMode, zoneLabel
     prevRank.current = new Map(stats.rank);
     if (added.length) setBubbles((b) => [...b.filter((x) => x.until > now), ...added]);
   }, [snap, stats, byId, raceStarted]);
+
   useEffect(() => {
     const id = setInterval(() => setBubbles((b) => (b.some((x) => x.until <= Date.now()) ? b.filter((x) => x.until > Date.now()) : b)), 300);
     return () => clearInterval(id);
   }, []);
 
-  const sorted = snap ? [...snap.balls].sort((a, b) => (a.finished && b.finished ? a.rank - b.rank : a.finished ? -1 : b.finished ? 1 : b.progress - a.progress)) : [];
+  const sorted = snap
+    ? [...snap.balls].sort((a, b) => (a.finished && b.finished ? a.rank - b.rank : a.finished ? -1 : b.finished ? 1 : b.progress - a.progress))
+    : [];
   const top = sorted.slice(0, 5);
   const leaderPid = top[0]?.playerId;
 
+  const godLeft = snap?.godLeft ?? 0;
+  const godCd = snap?.godCooldown ?? 0;
+  const godReady = raceStarted && godLeft <= 0 && godCd <= 0;
+
   return (
-    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-3 text-white sm:p-4">
-      {/* top bar */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="rounded-xl bg-black/45 px-3 py-2 backdrop-blur-sm">
-          <div className="font-mono text-xl font-bold tabular-nums">{fmt(snap?.time ?? 0)}</div>
-          <div className="text-[11px] text-white/70">
-            🏰 {snap?.finishedCount ?? 0}/30 · {zoneLabel}
+    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-3 text-white sm:p-5">
+      {/* Top Header */}
+      <div className="flex items-start justify-between gap-3">
+        {/* Race Time & Zone Info */}
+        <div className="rounded-2xl border border-white/10 bg-black/60 px-4 py-3 backdrop-blur-md shadow-lg">
+          <div className="font-mono text-2xl sm:text-3xl font-extrabold tracking-tight tabular-nums text-white">
+            {fmt(snap?.time ?? 0)}
           </div>
-          <div className="text-[11px] text-white/60">💥 Clash {snap?.clashCount ?? 0} · 🖐️ ลากหน้าจอเพื่อหมุนกล้อง</div>
+          <div className="mt-0.5 text-xs sm:text-sm font-medium text-white/80">
+            🏰 {snap?.finishedCount ?? 0}/{players.length} · {zoneLabel || "เริ่มต้น"}
+          </div>
+          <div className="mt-1 text-[11px] sm:text-xs text-white/60">
+            💥 Clash {snap?.clashCount ?? 0} · 🖐️ ลากเพื่อหมุน 360°
+          </div>
           {events.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1">
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {events.map((e) => (
-                <span key={e.id} title={e.name} className="rounded-full bg-white/10 px-1.5 py-0.5 text-[11px]">
+                <span key={e.id} title={e.name} className="rounded-full bg-white/15 px-2 py-0.5 text-xs font-medium">
                   {e.icon}
                 </span>
               ))}
@@ -96,22 +128,32 @@ export default function HUD({ players, snap, cameraMode, onCameraMode, zoneLabel
           )}
         </div>
 
-        <div className="max-w-[55%] rounded-xl bg-black/45 p-2 backdrop-blur-sm">
-          <div className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-white/60">อันดับ</div>
-          <ul className="space-y-0.5">
+        {/* Top 5 Leaderboard (Right Side) */}
+        <div className="max-w-[55%] rounded-2xl border border-white/10 bg-black/60 p-3 backdrop-blur-md shadow-lg">
+          <div className="mb-1.5 px-1 text-sm font-bold uppercase tracking-wider text-amber-300">
+            🏆 5 อันดับแรก
+          </div>
+          <ul className="space-y-1">
             {top.map((b, i) => {
               const p = byId.get(b.playerId)!;
               return (
-                <li key={b.id} className="flex items-center gap-1.5 text-xs">
-                  <span className="w-4 text-right font-mono text-white/70">{i + 1}</span>
-                  <span className="h-3 w-3 shrink-0 rounded-full border border-white/40" style={{ background: slimeGradient(p.color, p.color2) }} />
-                  <span className="max-w-[90px] truncate font-medium">
+                <li key={b.id} className="flex items-center gap-2 text-sm sm:text-base">
+                  <span className="w-4 text-right font-mono font-bold text-white/80">{i + 1}</span>
+                  <span
+                    className="h-3.5 w-3.5 shrink-0 rounded-full border border-white/50 shadow"
+                    style={{ background: slimeGradient(p.color, p.color2) }}
+                  />
+                  <span className="max-w-[110px] truncate font-semibold">
                     {p.name}
-                    <span className="text-white/50">#{b.number}</span>
+                    <span className="ml-0.5 text-white/50 text-[11px]">#{b.number}</span>
                   </span>
-                  <span className="text-[10px] text-amber-300" title="ATK Power">{"⚔".repeat(Math.min(b.atk, 5))}</span>
-                  {b.godMode && <span className="text-[10px]">⚡</span>}
-                  <span className="ml-auto font-mono tabular-nums text-white/80">{b.finished ? "🏰" : `${Math.round(b.progress * 100)}%`}</span>
+                  <span className="text-[11px] text-amber-300" title={`ATK Power: ${b.atk}`}>
+                    {"⚔".repeat(Math.min(b.atk, 5))}
+                  </span>
+                  {b.godMode && <span className="text-xs animate-bounce">⚡</span>}
+                  <span className="ml-auto font-mono tabular-nums font-bold text-white/90">
+                    {b.finished ? "🏰" : `${Math.round(b.progress * 100)}%`}
+                  </span>
                 </li>
               );
             })}
@@ -119,25 +161,102 @@ export default function HUD({ players, snap, cameraMode, onCameraMode, zoneLabel
         </div>
       </div>
 
-      {/* bottom: single race bar */}
-      <div className="pointer-events-auto flex flex-col gap-2">
-        <div className="rounded-2xl bg-black/50 px-3 pb-3 pt-9 backdrop-blur-sm">
-          <div className="relative h-3 w-full rounded-full bg-gradient-to-r from-emerald-900/70 via-sky-900/70 to-amber-900/70 ring-1 ring-white/15">
-            {/* zone markers */}
+      {/* LEFT: Event log + compact team bubbles */}
+      <div className="pointer-events-auto absolute left-3 top-36 sm:left-5 sm:top-48 flex w-52 sm:w-64 flex-col gap-2 max-h-[50vh] sm:max-h-[54vh]">
+        <div className="rounded-2xl border border-white/10 bg-black/65 p-2.5 shadow-lg backdrop-blur-md">
+          <div className="mb-1.5 px-1 text-xs sm:text-sm font-bold uppercase tracking-wider text-sky-300">📜 อีเวนต์</div>
+          <ul className="max-h-36 sm:max-h-44 space-y-1 overflow-y-auto pr-1">
+            {logs.length === 0 && <li className="px-1 text-xs sm:text-sm text-white/40">รอเริ่มแข่ง...</li>}
+            {[...logs].slice(-12).reverse().map((e) => (
+              <li key={e.id} className="border-b border-white/5 px-1 py-0.5 last:border-0">
+                <span className="font-mono text-[11px] sm:text-xs text-white/50">{fmt(e.time)}</span>
+                <span className="ml-1.5 text-xs sm:text-sm font-semibold leading-snug" style={{ color: e.color }}>
+                  {e.text}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="mb-1 px-2 text-xs sm:text-sm font-bold uppercase tracking-wider text-white/60">
+          📊 ทีมสไลม์
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {stats.order.map((item, idx) => {
+            const { p, best, finished, total } = item;
+            const isFollowing = cameraMode === p.id;
+            const isLeader = idx === 0;
+            const pct = Math.round(best * 100);
+            return (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    if (guest) return;
+                    onCameraMode(isFollowing ? "leader" : p.id);
+                  }}
+                  className={`group flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-left text-xs sm:text-sm font-medium backdrop-blur-md transition-all active:scale-[0.98] ${
+                  isFollowing
+                    ? "border-amber-400/80 bg-black/80 ring-2 ring-amber-400 shadow-md"
+                    : "border-white/10 bg-black/55 hover:bg-black/75 text-white/90"
+                }`}
+                title={`แตะเพื่อตาม ${p.name}`}
+              >
+                {/* Slime avatar */}
+                <div
+                  className="relative h-6 w-6 shrink-0 rounded-full border-2 border-white/60 shadow-inner"
+                  style={{ background: slimeGradient(p.color, p.color2) }}
+                >
+                  <span className="absolute left-1 top-1 h-1 w-1 rounded-full bg-white" />
+                  <span className="absolute right-1 top-1 h-1 w-1 rounded-full bg-white" />
+                  {isLeader && (
+                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-xs">👑</span>
+                  )}
+                </div>
+
+                {/* Name & Progress bar mini */}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-1 leading-tight">
+                    <span className="truncate font-bold text-white text-sm">
+                      #{idx + 1} {p.name}
+                    </span>
+                    <span className="font-mono text-[11px] sm:text-xs font-bold text-amber-300">
+                      {finished > 0 ? `🏰 ${finished}/${total}` : `${pct}%`}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{ width: `${pct}%`, background: slimeGradient(p.color, p.color2) }}
+                    />
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        </div>
+      </div>
+
+      {/* Bottom Area: 1 Single Main Race Bar + Control Buttons */}
+      <div className="pointer-events-auto flex flex-col gap-2.5">
+        {/* Main 1-Bar Progress Track */}
+        <div className="rounded-2xl border border-white/10 bg-black/60 px-4 pb-3 pt-10 backdrop-blur-md shadow-2xl">
+          <div className="relative h-3.5 w-full rounded-full bg-gradient-to-r from-emerald-950 via-sky-950 to-amber-950 ring-1 ring-white/20">
+            {/* Zone Markers along the bar */}
             {markers.map((m, i) => (
               <span
                 key={i}
                 title={m.label}
-                className="absolute -top-5 -translate-x-1/2 text-[10px] leading-none opacity-70 sm:text-xs"
+                className="absolute -top-6 -translate-x-1/2 text-xs sm:text-sm leading-none opacity-80"
                 style={{ left: `${m.at * 100}%` }}
               >
                 {m.icon}
               </span>
             ))}
-            <span className="absolute -right-1 -top-6 text-sm">🏰</span>
-            <span className="absolute -left-1 -top-6 text-sm">🚩</span>
+            <span className="absolute -right-1.5 -top-7 text-base">🏰</span>
+            <span className="absolute -left-1.5 -top-7 text-base">🚩</span>
 
-            {/* player dots */}
+            {/* Slime Dots on 1 Bar */}
             {stats.list.map(({ p, best }) => {
               const r = stats.rank.get(p.id) ?? 0;
               const following = cameraMode === p.id;
@@ -146,23 +265,28 @@ export default function HUD({ players, snap, cameraMode, onCameraMode, zoneLabel
               return (
                 <button
                   key={p.id}
-                  onClick={() => onCameraMode(following ? "leader" : p.id)}
+                  onClick={() => {
+                    if (guest) return;
+                    onCameraMode(following ? "leader" : p.id);
+                  }}
                   className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 transition-[left] duration-200 ease-linear"
                   style={{ left: `${best * 100}%`, zIndex: 50 - r }}
-                  title={p.name}
+                  title={`${p.name} (${Math.round(best * 100)}%)`}
                 >
                   <span
-                    className={`block h-5 w-5 rounded-full border-2 shadow-md transition-transform ${following ? "scale-125 border-white ring-2 ring-orange-400" : "border-white/70"}`}
+                    className={`block h-6 w-6 rounded-full border-2 shadow-lg transition-transform ${
+                      following ? "scale-125 border-white ring-2 ring-amber-400" : "border-white/80"
+                    }`}
                     style={{ background: slimeGradient(p.color, p.color2) }}
                   >
-                    <span className="absolute left-[5px] top-[5px] h-1 w-1 rounded-full bg-white" />
-                    <span className="absolute right-[5px] top-[5px] h-1 w-1 rounded-full bg-white" />
+                    <span className="absolute left-[6px] top-[6px] h-1 w-1 rounded-full bg-white" />
+                    <span className="absolute right-[6px] top-[6px] h-1 w-1 rounded-full bg-white" />
                   </span>
-                  {isLeader && <span className="absolute -top-4 left-1/2 -translate-x-1/2 text-xs">👑</span>}
+                  {isLeader && <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-sm">👑</span>}
                   {bubble && (
                     <span
-                      className="bubble-pop absolute bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-bold text-white shadow-lg"
-                      style={{ background: p.color + "e6", borderColor: p.color2 }}
+                      className="bubble-pop absolute bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs sm:text-sm font-extrabold text-white shadow-xl"
+                      style={{ background: p.color + "f2", borderColor: p.color2 }}
                     >
                       {bubble.text}
                     </span>
@@ -171,36 +295,94 @@ export default function HUD({ players, snap, cameraMode, onCameraMode, zoneLabel
               );
             })}
           </div>
-          <div className="mt-1.5 flex items-center justify-between text-[10px] text-white/50">
-            <span>แตะสไลม์บนแถบเพื่อตามกล้อง</span>
-            <span>
-              {cameraMode === "leader" ? "🎥 ตามผู้นำ" : `🎥 ตาม ${byId.get(cameraMode as number)?.name ?? ""}`}
+
+          <div className="mt-2 flex items-center justify-between text-xs text-white/60">
+            <span>แตะสไลม์บนแถบเพื่อสลับกล้อง</span>
+            <span className="font-medium text-amber-300">
+              {cameraMode === "leader" ? "🎥 กล้อง: ตามผู้นำ" : `🎥 กล้อง: ตาม ${byId.get(cameraMode as number)?.name ?? ""}`}
+              {" · "}
+              {cameraAngleMode === "auto" ? "🔄 AUTO Angle" : "🔒 FIX Angle"}
             </span>
           </div>
         </div>
 
-        <div className="flex gap-2">
+        {/* Action Buttons */}
+        <div className="flex flex-wrap sm:flex-nowrap gap-2 sm:gap-3">
+          {/* Follow Leader */}
+          {!guest && (
           <button
             onClick={() => {
               onCameraMode("leader");
               onResetCamera();
             }}
-            className={`flex-1 rounded-xl px-3 py-2.5 text-sm font-semibold backdrop-blur-sm transition ${cameraMode === "leader" ? "bg-emerald-500/80" : "bg-black/45 hover:bg-black/60"}`}
+            className={`flex-1 min-w-[120px] rounded-xl px-4 py-3.5 text-base sm:text-lg font-bold backdrop-blur-md transition active:scale-[0.98] ${
+              cameraMode === "leader"
+                ? "bg-emerald-500/90 text-white shadow-lg shadow-emerald-500/30"
+                : "bg-black/55 text-white/90 hover:bg-black/70 border border-white/10"
+            }`}
           >
             🎥 ตามผู้นำ
           </button>
+          )}
+          {guest && (
+            <div className="flex-1 rounded-xl bg-sky-500/80 px-4 py-3.5 text-center text-base font-black text-white">
+              👁 ดูสไลม์ของฉัน{myPlayerId != null ? ` · ${byId.get(myPlayerId)?.name ?? ""}` : ""}
+            </div>
+          )}
+
+          {/* Toggle Camera Angle (AUTO vs FIX) */}
+          <button
+            onClick={onToggleCameraAngle}
+            className={`rounded-xl px-4 py-3.5 text-base sm:text-lg font-bold backdrop-blur-md border border-white/10 transition active:scale-[0.98] ${
+              cameraAngleMode === "fix"
+                ? "bg-sky-500/90 text-white shadow-lg shadow-sky-500/30"
+                : "bg-black/55 text-white/90 hover:bg-black/70"
+            }`}
+            title="AUTO = กล้องหมุนตามทาง · FIX = ล็อกมุม ลากจอหมุนเอง"
+          >
+            {cameraAngleMode === "fix" ? "🔒 FIX Angle" : "🔄 AUTO Angle"}
+          </button>
+
+          {/* GOD MODE: host only */}
+          {isHost && (
           <button
             onClick={() => onGodMode()}
             disabled={!godReady}
-            className={`god-btn relative flex-1 overflow-hidden rounded-xl px-3 py-2.5 text-sm font-extrabold backdrop-blur-sm transition ${
-              godLeft > 0 ? "bg-gradient-to-r from-yellow-400 to-orange-500 text-black" : godReady ? "god-ready bg-gradient-to-r from-amber-500 to-rose-500 text-white" : "bg-black/45 text-white/50"
+            className={`god-btn relative flex-1 min-w-[150px] overflow-hidden rounded-xl px-4 py-3.5 text-base sm:text-lg font-black backdrop-blur-md transition active:scale-[0.98] ${
+              godLeft > 0
+                ? "bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 text-black shadow-xl"
+                : godReady
+                ? "god-ready bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 text-white shadow-lg shadow-amber-500/40"
+                : "bg-black/55 text-white/40 border border-white/10"
             }`}
+            title="เร่งสปีด 10 อันดับสุดท้าย เป็นเวลา 5 วินาที"
           >
-            {godLeft > 0 ? `⚡ GOD MODE ${godLeft.toFixed(1)}s` : godCd > 0 ? `⚡ GOD MODE (${Math.ceil(godCd)}s)` : "⚡ GOD MODE"}
-            {godCd > 0 && godLeft <= 0 && <span className="absolute inset-y-0 left-0 bg-white/10" style={{ width: `${(1 - godCd / 20) * 100}%` }} />}
+            {godLeft > 0 ? (
+              <span className="flex items-center justify-center gap-1.5 animate-pulse">
+                ⚡ GOD MODE {godLeft.toFixed(1)}s (10 ตัวท้าย)
+              </span>
+            ) : godCd > 0 ? (
+              <span>⚡ GOD MODE ({Math.ceil(godCd)}s)</span>
+            ) : (
+              <span className="flex items-center justify-center gap-1.5">
+                ⚡ GOD MODE (10 ตัวท้าย)
+              </span>
+            )}
+            {godCd > 0 && godLeft <= 0 && (
+              <span
+                className="absolute inset-y-0 left-0 bg-white/15"
+                style={{ width: `${(1 - godCd / 20) * 100}%` }}
+              />
+            )}
           </button>
-          {raceStarted && (
-            <button onClick={onEnd} className="rounded-xl bg-black/45 px-3 py-2.5 text-sm font-semibold backdrop-blur-sm hover:bg-black/60">
+          )}
+
+          {/* End Race early button — host only */}
+          {isHost && raceStarted && (
+            <button
+              onClick={onEnd}
+              className="rounded-xl border border-white/10 bg-black/55 px-4 py-3.5 text-base sm:text-lg font-semibold text-rose-300 backdrop-blur-md hover:bg-rose-500/20 active:scale-[0.98]"
+            >
               จบการแข่ง
             </button>
           )}

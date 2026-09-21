@@ -55,3 +55,9 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 }
 .god-ready { animation: godPulse 1.4s ease-in-out infinite; }
 .god-btn:disabled { cursor: not-allowed; }
+
+@keyframes slimeBob {
+  0%, 100% { transform: translateY(0) scaleX(1) scaleY(1); }
+  50% { transform: translateY(-8px) scaleX(0.96) scaleY(1.06); }
+}
+.slime-bob { animation: slimeBob 1.6s ease-in-out infinite; transform-origin: 50% 100%; }

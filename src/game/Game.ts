@@ -149,7 +149,7 @@ const FLOOR_T = 0.6;
 const WALL_T = 0.4;
 const PHYS_WALL_H = 7.5; // invisible extra height so balls can't fly out
 const MAX_SPEED = 15;
-const GOD_SPEED = 32;
+const GOD_SPEED = 16;
 const GOD_DURATION = 5;
 const GOD_COOLDOWN = 20;
 const CLASH_MIN_SPEED = 9; // attacker must be faster than this
@@ -430,8 +430,9 @@ export class Game {
   private dragging = false;
   private lastPtr = { x: 0, y: 0 };
   private canvasEl: HTMLCanvasElement;
+  private fixDist = 11;
   private hold = { state: "idle" as "idle" | "holding" | "open", timer: 0, segIndex: -1, body: null as CANNON.Body | null, base: new THREE.Vector3(), label: null as THREE.Sprite | null, labelCanvas: null as HTMLCanvasElement | null, labelTex: null as THREE.CanvasTexture | null, lastNum: -1, barrier: null as THREE.Mesh | null };
-  private dish = { state: "idle" as "idle" | "waiting" | "opening" | "open", timer: 0, d: 0, segIndex: -1, center: new THREE.Vector3(), yC: 0, dh: new THREE.Vector3(), right: new THREE.Vector3(), petals: [] as { body: CANNON.Body; dirR: THREE.Vector3 }[], glow: null as THREE.Mesh | null, rune: null as THREE.Mesh | null, label: null as THREE.Sprite | null };
+  private dish = { state: "idle" as "idle" | "waiting" | "opening" | "sucking" | "blast" | "open", timer: 0, cycleT: 0, rounds: 0, d: 0, segIndex: -1, center: new THREE.Vector3(), yC: 0, dh: new THREE.Vector3(), right: new THREE.Vector3(), petals: [] as { body: CANNON.Body; dirR: THREE.Vector3 }[], glow: null as THREE.Mesh | null, rune: null as THREE.Mesh | null, label: null as THREE.Sprite | null, sucked: false };
   private camMarker: THREE.Sprite;
   private embers: THREE.Points;
   private gate?: CANNON.Body;
@@ -439,10 +440,11 @@ export class Game {
 
   // camera
   cameraMode: "leader" | number = "leader";
+  cameraAngleMode: "auto" | "fix" = "auto";
   private camPos = new THREE.Vector3();
   private camLook = new THREE.Vector3();
   private sun: THREE.DirectionalLight;
-  private env: EnvHandles;
+  private env?: EnvHandles;
 
   // obstacles
   private rocks: Rock[] = [];
@@ -456,6 +458,7 @@ export class Game {
   private windDir = 1;
   private windForce = 0;
   private windSeg?: Segment;
+  private windSpotT = 0;
   private sparks: THREE.Points;
   private sparkVel: Float32Array;
   private sparkLife: Float32Array;
@@ -471,16 +474,18 @@ export class Game {
     window.addEventListener("pointercancel", this.onPtrUp);
     this.isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.isMobile, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.isMobile ? 1.5 : 2));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    const w = Math.max(2, window.innerWidth || 800);
+    const h = Math.max(2, window.innerHeight || 600);
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.isMobile, powerPreference: "high-performance", alpha: false });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.isMobile ? 1.5 : 2));
+    this.renderer.setSize(w, h);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+    this.camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 500);
     this.scene.fog = new THREE.Fog(0xcfe3f5, 70, 260);
 
     // lights
@@ -524,21 +529,24 @@ export class Game {
     this.world.addEventListener("preStep", () => {
       this.physTime += 1 / 60;
       for (const k of this.kinematics) k.update(this.physTime, 1 / 60);
-      if (this.windForce !== 0) {
-        const s = this.windSeg!;
+      if (this.windForce !== 0 && this.windSeg) {
+        const s = this.windSeg;
+        const spot = this.windSpotT;
         for (const b of this.balls) {
           if (b.finished || b.seg !== s.index) continue;
+          const t = (b.body.position.x - s.a.x) * s.dir.x + (b.body.position.y - s.a.y) * s.dir.y + (b.body.position.z - s.a.z) * s.dir.z;
+          if (Math.abs(t - spot) > 3.5) continue;
           b.body.applyForce(new CANNON.Vec3(s.right.x * this.windForce, 0, s.right.z * this.windForce));
         }
       }
-      // GOD MODE thrust
+      // GOD MODE thrust (50% of original force, last 10 slimes)
       if (this.godBalls.length) {
         for (const b of this.godBalls) {
           if (b.finished) continue;
           const s = this.segs[b.seg];
           const v = b.body.velocity;
           const along = v.x * s.dir.x + v.y * s.dir.y + v.z * s.dir.z;
-          if (along < GOD_SPEED) b.body.applyForce(new CANNON.Vec3(s.dir.x * 60, 0, s.dir.z * 60));
+          if (along < GOD_SPEED) b.body.applyForce(new CANNON.Vec3(s.dir.x * 30, 0, s.dir.z * 30));
         }
       }
     });
@@ -566,20 +574,25 @@ export class Game {
       }
     }
 
-    // environment reflections
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.35;
-    pmrem.dispose();
+    try {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environmentIntensity = 0.35;
+      pmrem.dispose();
+    } catch {
+      /* optional reflections */
+    }
 
-    // post-processing bloom (desktop only)
     if (!this.isMobile) {
-      const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { type: THREE.HalfFloatType, samples: 4 });
-      this.composer = new EffectComposer(this.renderer, rt);
-      this.composer.addPass(new RenderPass(this.scene, this.camera));
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.35, 0.5, 0.88);
-      this.composer.addPass(this.bloom);
-      this.composer.addPass(new OutputPass());
+      try {
+        this.composer = new EffectComposer(this.renderer);
+        this.composer.addPass(new RenderPass(this.scene, this.camera));
+        this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.28, 0.5, 0.9);
+        this.composer.addPass(this.bloom);
+        this.composer.addPass(new OutputPass());
+      } catch {
+        this.composer = undefined;
+      }
     }
 
     this.buildEnvironment();
@@ -629,7 +642,11 @@ export class Game {
     this.camLook.copy(s0.a).addScaledVector(s0.dir, 8);
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
-    this.env = buildRpgEnvironment(this.scene, this.segs, this.isMobile);
+    try {
+      this.env = buildRpgEnvironment(this.scene, this.segs, this.isMobile);
+    } catch (err) {
+      console.error("environment", err);
+    }
 
     window.addEventListener("resize", this.onResize);
     this.lastT = performance.now();
@@ -949,10 +966,11 @@ export class Game {
       this.scene.add(crack);
     }
 
-    // ---- spinners ----
-    const sp = this.findSeg("spinners");
-    const spinMat = new THREE.MeshStandardMaterial({ color: 0xc084fc, emissive: 0x7e22ce, emissiveIntensity: 0.4, metalness: 0.5, roughness: 0.3 });
+    // ---- spinners (optional — skipped if the zone was cleared) ----
+    const sp = this.segs.find((x) => x.zone === "spinners");
     const postMat = new THREE.MeshStandardMaterial({ color: 0x27272a, metalness: 0.7, roughness: 0.4 });
+    if (sp) {
+    const spinMat = new THREE.MeshStandardMaterial({ color: 0xc084fc, emissive: 0x7e22ce, emissiveIntensity: 0.4, metalness: 0.5, roughness: 0.3 });
     [0.25, 0.5, 0.75].forEach((f, i) => {
       const center = this.segPoint(sp, sp.len * f, 0, 0.45);
       const half = new CANNON.Vec3(sp.width * 0.4, 0.3, 0.22);
@@ -972,16 +990,17 @@ export class Game {
       this.scene.add(post);
       this.kinematics.push({ body, mesh, update: () => {} });
     });
+    }
 
     // ---- pegs ----
     const pg = this.findSeg("pegs");
     const pegMat = new THREE.MeshStandardMaterial({ color: 0x4ade80, emissive: 0x166534, emissiveIntensity: 0.5, metalness: 0.4, roughness: 0.35 });
     const pegGeo = new THREE.CylinderGeometry(0.3, 0.3, 1.2, 10);
-    const rows = Math.floor((pg.len - 6) / 4);
+    const rows = Math.floor((pg.len - 6) / 5);
     for (let r = 0; r < rows; r++) {
-      const t = 4 + r * 4;
-      const offset = r % 2 ? 1.5 : 0;
-      for (let l = -pg.width / 2 + 1.5 + offset; l < pg.width / 2 - 1; l += 3) {
+      const t = 4 + r * 5;
+      const offset = r % 2 ? 1.6 : 0;
+      for (let l = -pg.width / 2 + 1.6 + offset; l < pg.width / 2 - 1; l += 3.6) {
         const p = this.segPoint(pg, t, l, 0.5);
         const body = new CANNON.Body({ mass: 0, material: this.trackPhysMat });
         body.addShape(new CANNON.Cylinder(0.3, 0.3, 1.2, 8));
@@ -999,7 +1018,7 @@ export class Game {
     // ---- pistons ----
     const ps = this.findSeg("pistons");
     const pistonMat = new THREE.MeshStandardMaterial({ color: 0x60a5fa, emissive: 0x1d4ed8, emissiveIntensity: 0.35, metalness: 0.6, roughness: 0.3 });
-    const nPist = 4;
+    const nPist = 3;
     for (let i = 0; i < nPist; i++) {
       const t = ps.len * ((i + 1) / (nPist + 1));
       const side = i % 2 === 0 ? -1 : 1;
@@ -1034,36 +1053,33 @@ export class Game {
       });
     }
 
-    // ---- wind ----
+    // ---- wind (single blast point) ----
     const wd = this.findSeg("wind");
-    const N = 160;
+    this.windSpotT = wd.len * 0.5;
+    const N = 70;
     const pos = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
-      const p = this.segPoint(wd, Math.random() * wd.len, (Math.random() - 0.5) * wd.width, 0.2 + Math.random() * 2.5);
+      const p = this.segPoint(wd, this.windSpotT + (Math.random() - 0.5) * 4, (Math.random() - 0.5) * wd.width, 0.2 + Math.random() * 2.5);
       pos.set([p.x, p.y, p.z], i * 3);
     }
     const wg = new THREE.BufferGeometry();
     wg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    this.windParticles = new THREE.Points(wg, new THREE.PointsMaterial({ color: 0x99f6e4, size: 0.18, transparent: true, opacity: 0.7, depthWrite: false }));
+    this.windParticles = new THREE.Points(wg, new THREE.PointsMaterial({ color: 0x99f6e4, size: 0.22, transparent: true, opacity: 0.75, depthWrite: false }));
     this.windParticles.frustumCulled = false;
     this.scene.add(this.windParticles);
-    // fans decoration
     const fanMat = new THREE.MeshStandardMaterial({ color: 0x14b8a6, emissive: 0x0f766e, emissiveIntensity: 0.5, metalness: 0.5, roughness: 0.4 });
-    for (let i = 0; i < 3; i++) {
-      const fan = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.18, 8, 24), fanMat);
-      fan.position.copy(this.segPoint(wd, wd.len * ((i + 1) / 4), -(wd.width / 2 + 0.8), 1.6));
+    for (const side of [-1, 1]) {
+      const fan = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.2, 8, 24), fanMat);
+      fan.position.copy(this.segPoint(wd, this.windSpotT, side * (wd.width / 2 + 0.8), 1.6));
       fan.quaternion.copy(wd.quat);
       fan.rotateY(Math.PI / 2);
       this.scene.add(fan);
-      const fan2 = fan.clone();
-      fan2.position.copy(this.segPoint(wd, wd.len * ((i + 1) / 4), wd.width / 2 + 0.8, 1.6));
-      this.scene.add(fan2);
     }
 
     // ---- hammers ----
     const hm = this.findSeg("hammers");
     const hammerMat = new THREE.MeshStandardMaterial({ color: 0xf87171, emissive: 0x991b1b, emissiveIntensity: 0.4, metalness: 0.5, roughness: 0.35 });
-    const nH = 3;
+    const nH = 2;
     const L = 4.3;
     const pivotH = 5;
     for (let i = 0; i < nH; i++) {
@@ -1465,8 +1481,13 @@ export class Game {
       }
     }
 
-    if (this.composer) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+    try {
+      if (this.composer) this.composer.render();
+      else this.renderer.render(this.scene, this.camera);
+    } catch {
+      this.composer = undefined;
+      try { this.renderer.render(this.scene, this.camera); } catch { /* ignore */ }
+    }
   };
 
   private updateBalls(dt: number) {
@@ -1582,7 +1603,7 @@ export class Game {
     const active = this.balls.some((b) => !b.finished && b.progress > s.cumStart - 12 && b.progress < s.cumStart + s.len + 4);
     this.rockTimer -= dt;
     if (active && this.rockTimer <= 0 && this.rocks.length < 16) {
-      this.rockTimer = 0.35 + Math.random() * 0.3;
+      this.rockTimer = 0.5 + Math.random() * 0.4;
       const r = 0.5 + Math.random() * 0.5;
       const p = this.segPoint(s, 4 + Math.random() * (s.len - 6), (Math.random() - 0.5) * (s.width - 1), 12 + Math.random() * 6);
       const body = new CANNON.Body({ mass: r * 10, material: this.trackPhysMat, angularDamping: 0.2 });
@@ -1618,7 +1639,7 @@ export class Game {
     const active = this.balls.some((b) => !b.finished && b.progress > s.cumStart - 10 && b.progress < s.cumStart + s.len);
     this.lavaTimer -= dt;
     if (active && this.lavaTimer <= 0) {
-      this.lavaTimer = 0.45 + Math.random() * 0.4;
+      this.lavaTimer = 0.6 + Math.random() * 0.5;
       const e = this.eruptions.find((x) => x.phase === "idle");
       if (e) {
         // bias eruption toward where balls are
@@ -1691,20 +1712,21 @@ export class Game {
     const strength = Math.sin(this.time * 0.9) * 0.8 + Math.sin(this.time * 2.3) * 0.5;
     this.windDir = strength >= 0 ? 1 : -1;
     this.windSeg = s;
-    this.windForce = 22 * strength;
+    this.windForce = 28 * strength;
     if (this.windParticles) {
       const arr = this.windParticles.geometry.attributes.position.array as Float32Array;
       const tmp = new THREE.Vector3();
-      const speed = 6 + Math.abs(strength) * 12;
+      const speed = 8 + Math.abs(strength) * 14;
+      const spot = this.windSpotT;
       for (let i = 0; i < arr.length; i += 3) {
-        arr[i] += s.right.x * speed * dt * this.windDir + s.dir.x * 3 * dt;
-        arr[i + 1] += s.dir.y * 3 * dt;
-        arr[i + 2] += s.right.z * speed * dt * this.windDir + s.dir.z * 3 * dt;
+        arr[i] += s.right.x * speed * dt * this.windDir;
+        arr[i + 1] += s.dir.y * dt;
+        arr[i + 2] += s.right.z * speed * dt * this.windDir;
         tmp.set(arr[i] - s.a.x, arr[i + 1] - s.a.y, arr[i + 2] - s.a.z);
         const lat = tmp.dot(s.right);
         const t = tmp.dot(s.dir);
-        if (Math.abs(lat) > s.width / 2 || t > s.len || t < 0) {
-          this.segPoint(s, Math.random() * s.len, -this.windDir * (s.width / 2 - 0.1), 0.2 + Math.random() * 2.5, tmp);
+        if (Math.abs(lat) > s.width / 2 || Math.abs(t - spot) > 2.5) {
+          this.segPoint(s, spot + (Math.random() - 0.5) * 3.5, -this.windDir * (s.width / 2 - 0.1), 0.2 + Math.random() * 2.5, tmp);
           arr[i] = tmp.x;
           arr[i + 1] = tmp.y;
           arr[i + 2] = tmp.z;
@@ -2293,7 +2315,9 @@ export class Game {
   private updateDish(dt: number) {
     const d = this.dish;
     const s = this.segs[d.segIndex];
-    if (d.rune) d.rune.rotation.z += dt * 0.3;
+    const spin = d.state === "sucking" || d.state === "blast" ? 2.4 : 0.85;
+    if (d.rune) d.rune.rotation.z += dt * spin;
+    if (d.glow) d.glow.rotation.z -= dt * spin * 0.6;
     const alive = this.balls.filter((b) => !b.finished);
     const inDish = alive.filter((b) => b.seg === s.index).length;
     if (d.state === "idle") {
@@ -2313,10 +2337,87 @@ export class Game {
       d.timer += dt;
       const k = THREE.MathUtils.clamp(d.timer / DISH_OPEN_TIME, 0, 1);
       d.d = DISH_HOLE_MAX * (k * k * (3 - 2 * k));
-      if (d.glow) (d.glow.material as THREE.MeshBasicMaterial).opacity = 0.25 + k * 0.4;
-      if (k >= 1) d.state = "open";
+      if (d.glow) (d.glow.material as THREE.MeshBasicMaterial).opacity = 0.25 + k * 0.55;
+      if (d.d / DISH_HOLE_MAX >= 0.9) {
+        d.state = "sucking";
+        d.cycleT = 0;
+        d.rounds = 1;
+        this.cb.onNotice?.("🌀 รอบ 1/2 ดูดลงหลุม แล้วพัดไปข้างหน้า!", "#d946ef");
+        this.burst(d.center.clone().add(new THREE.Vector3(0, 1, 0)), 50, new THREE.Color(0xd946ef));
+      }
+    } else if (d.state === "sucking" || d.state === "blast") {
+      d.d = Math.max(d.d, DISH_HOLE_MAX * 0.95);
+      d.cycleT += dt;
+      if (d.state === "sucking") {
+        this.suckThroughDish(true);
+        if (d.cycleT >= 0.7) {
+          d.state = "blast";
+          d.cycleT = 0;
+          this.cb.onNotice?.(`💨 รอบ ${d.rounds}/2 พัดไปข้างหน้า!`, "#22d3ee");
+        }
+      } else {
+        this.blastDishForward();
+        if (d.cycleT >= 0.85) {
+          d.cycleT = 0;
+          if (d.rounds < 2) {
+            d.rounds++;
+            d.state = "sucking";
+            this.cb.onNotice?.("🌀 รอบ 2/2 ดูดแล้วพัดอีกครั้ง!", "#d946ef");
+          } else {
+            d.state = "open";
+          }
+        }
+      }
     }
-    if (d.glow) d.glow.scale.setScalar(Math.max(0.05, d.d / DISH_HOLE_MAX));
+    if (d.glow) {
+      const pulse = d.state === "sucking" || d.state === "blast" ? 1 + Math.sin(performance.now() * 0.025) * 0.3 : 1;
+      d.glow.scale.setScalar(Math.max(0.05, (d.d / DISH_HOLE_MAX) * pulse));
+    }
+  }
+
+  /** Vacuum slimes in the bowl down the hole, then fling them forward. */
+  private suckThroughDish(fling: boolean) {
+    const d = this.dish;
+    const next = this.segs[d.segIndex + 1];
+    if (!next) return;
+    const holeR = Math.max(d.d, DISH_HOLE_MAX * 0.9);
+    for (const b of this.balls) {
+      if (b.finished) continue;
+      const p = b.body.position;
+      const dx = p.x - d.center.x;
+      const dz = p.z - d.center.z;
+      const dist = Math.hypot(dx, dz);
+      const inBowl = b.seg === d.segIndex || (dist < DISH_R_OUT + 2.5 && p.y > d.yC - 5 && p.y < d.yC + 7);
+      if (!inBowl) continue;
+      const nx = dist > 0.05 ? dx / dist : 0;
+      const nz = dist > 0.05 ? dz / dist : 0;
+      b.body.velocity.x += -nx * 0.85;
+      b.body.velocity.z += -nz * 0.85;
+      b.body.velocity.y -= 0.55;
+      b.body.applyForce(new CANNON.Vec3(-dx * 22, -80, -dz * 22));
+      if (dist < holeR * 0.92 || p.y < d.yC - 0.4) {
+        const dest = this.segPoint(next, 2.2 + Math.random() * 1.4, (Math.random() - 0.5) * (next.width * 0.35), BALL_R + 0.6);
+        b.body.position.set(dest.x, dest.y, dest.z);
+        const spd = fling ? 14 : 8;
+        b.body.velocity.set(next.dir.x * spd, -1.2, next.dir.z * spd);
+        b.body.angularVelocity.set((Math.random() - 0.5) * 10, 6, (Math.random() - 0.5) * 10);
+        b.seg = next.index;
+        b.slime.tumble = 1.2;
+        this.burst(dest, 10, new THREE.Color(0xc084fc));
+      }
+    }
+  }
+
+  private blastDishForward() {
+    const d = this.dish;
+    const next = this.segs[d.segIndex + 1];
+    if (!next) return;
+    for (const b of this.balls) {
+      if (b.finished || b.seg !== next.index) continue;
+      b.body.applyForce(new CANNON.Vec3(next.dir.x * 55, 4, next.dir.z * 55));
+      b.body.velocity.x += next.dir.x * 0.35;
+      b.body.velocity.z += next.dir.z * 0.35;
+    }
   }
 
   zoneMarkers(): ZoneMarker[] {
@@ -2356,8 +2457,29 @@ export class Game {
     this.orbitIdle = 0;
   };
   resetCamera() {
-    this.orbitActive = false;
-    this.orbitYaw = this.orbitPitch = 0;
+    if (this.cameraAngleMode === "fix") {
+      this.orbitYaw = Math.PI * 0.18;
+      this.orbitPitch = 0.48;
+      this.fixDist = 11;
+    } else {
+      this.orbitActive = false;
+      this.orbitYaw = this.orbitPitch = 0;
+    }
+  }
+
+  setCameraAngleMode(mode: "auto" | "fix") {
+    if (mode === this.cameraAngleMode) return;
+    if (mode === "fix") {
+      const off = this.camPos.clone().sub(this.camFocus);
+      const dist = Math.max(8, off.length() || 11);
+      this.fixDist = dist;
+      this.orbitYaw = Math.atan2(off.x, off.z);
+      this.orbitPitch = Math.asin(THREE.MathUtils.clamp(off.y / dist, -1, 1));
+      this.orbitActive = true;
+    } else {
+      this.orbitActive = false;
+    }
+    this.cameraAngleMode = mode;
   }
 
   // ---------- POWER CLASH ----------
@@ -2490,21 +2612,17 @@ export class Game {
     if (!this.raceStarted || this.raceEnded || this.time < this.godReadyAt || this.godBalls.length) return false;
     const alive = this.balls.filter((b) => !b.finished);
     if (!alive.length) return false;
-    // rank players by their best alive progress
-    const best = new Map<number, number>();
-    for (const b of alive) best.set(b.playerId, Math.max(best.get(b.playerId) ?? 0, b.progress));
-    const order = [...best.entries()].sort((a, b) => a[1] - b[1]).map(([pid]) => pid);
-    const chosen = new Set(order.slice(0, Math.min(3, order.length)));
-    this.godBalls = alive.filter((b) => chosen.has(b.playerId));
+    // Sort alive slimes by progress ascending (the bottom / rearmost slimes)
+    const sortedAlive = [...alive].sort((a, b) => a.progress - b.progress);
+    this.godBalls = sortedAlive.slice(0, Math.min(10, sortedAlive.length));
     this.godUntil = this.time + GOD_DURATION;
     this.godReadyAt = this.time + GOD_COOLDOWN;
     for (const b of this.godBalls) {
       b.godUntil = this.godUntil;
-      b.body.applyImpulse(new CANNON.Vec3(this.segs[b.seg].dir.x * 6, 1, this.segs[b.seg].dir.z * 6));
-      this.burst(b.mesh.position, 20, new THREE.Color(0xfde047));
+      b.body.applyImpulse(new CANNON.Vec3(this.segs[b.seg].dir.x * 3, 0.5, this.segs[b.seg].dir.z * 3));
+      this.burst(b.mesh.position, 16, new THREE.Color(0xfde047));
     }
-    const names = [...chosen].map((pid) => this.players.find((p) => p.id === pid)?.name ?? "").join(", ");
-    this.cb.onNotice?.(`⚡ GOD MODE! ${names} สปีด x5 เป็นเวลา 5 วิ`, "#ca8a04");
+    this.cb.onNotice?.(`⚡ GOD MODE! เร่ง 10 อันดับสุดท้าย นาน 5 วิ`, "#ca8a04");
     return true;
   }
 
@@ -2571,25 +2689,39 @@ export class Game {
       }
       const kf = 1 - Math.exp(-dt * 7);
       this.camFocus.lerp(p, kf);
-      // smooth the travel direction (blend segment heading with velocity heading)
       const v = target.body.velocity;
-      const hv = new THREE.Vector3(v.x, 0, v.z);
-      const heading = hv.lengthSq() > 4 ? hv.normalize().lerp(s.dh, 0.4).normalize() : s.dh.clone();
-      this.camDir.lerp(heading, 1 - Math.exp(-dt * 2.5)).normalize();
-      const speed = Math.min(1, Math.hypot(v.x, v.z) / 12);
-      const back = 8.5 + speed * 2.5;
-      const desired = this.camFocus.clone().addScaledVector(this.camDir, -back).add(new THREE.Vector3(0, 5 + speed * 1.2, 0));
-      const look = this.camFocus.clone().addScaledVector(this.camDir, 5 + speed * 3).add(new THREE.Vector3(0, -0.3, 0));
-      if (!this.raceStarted) {
+      let desired: THREE.Vector3;
+      let look: THREE.Vector3;
+      if (this.cameraAngleMode === "fix") {
+        // FIX ANGLE: lock world-space orbit. Player rotates freely; angle never auto-resets.
+        const dist = this.fixDist || 11;
+        const yaw = this.orbitYaw;
+        const pitch = THREE.MathUtils.clamp(this.orbitPitch, 0.08, 1.25);
+        desired = new THREE.Vector3(
+          this.camFocus.x + Math.sin(yaw) * Math.cos(pitch) * dist,
+          this.camFocus.y + Math.sin(pitch) * dist,
+          this.camFocus.z + Math.cos(yaw) * Math.cos(pitch) * dist
+        );
+        look = this.camFocus.clone().add(new THREE.Vector3(0, 0.45, 0));
+      } else {
+        // AUTO ANGLE: Dynamic angle that smoothly blends velocity & track heading
+        const hv = new THREE.Vector3(v.x, 0, v.z);
+        const heading = hv.lengthSq() > 4 ? hv.normalize().lerp(s.dh, 0.4).normalize() : s.dh.clone();
+        this.camDir.lerp(heading, 1 - Math.exp(-dt * 2.5)).normalize();
+        const speed = Math.min(1, Math.hypot(v.x, v.z) / 12);
+        const back = 8.5 + speed * 2.5;
+        desired = this.camFocus.clone().addScaledVector(this.camDir, -back).add(new THREE.Vector3(0, 5 + speed * 1.2, 0));
+        look = this.camFocus.clone().addScaledVector(this.camDir, 5 + speed * 3).add(new THREE.Vector3(0, -0.3, 0));
+      }
+      if (!this.raceStarted && this.cameraAngleMode !== "fix") {
         desired.copy(this.segs[0].a).addScaledVector(this.segs[0].dh, -12).add(new THREE.Vector3(0, 8, 0));
         look.copy(this.segs[0].a).addScaledVector(this.segs[0].dh, 8);
       }
-      // user orbit: rotate the offset around the focus point
-      if (this.orbitActive) {
+      // AUTO only: temporary orbit overlay that eases back
+      if (this.cameraAngleMode === "auto" && this.orbitActive) {
         if (!this.dragging) {
           this.orbitIdle += dt;
           if (this.orbitIdle > 4) {
-            // ease back to auto-follow
             this.orbitYaw *= Math.exp(-dt * 1.5);
             this.orbitPitch *= Math.exp(-dt * 1.5);
             if (Math.abs(this.orbitYaw) < 0.02 && Math.abs(this.orbitPitch) < 0.02) {
@@ -2607,7 +2739,7 @@ export class Game {
         desired.set(this.camFocus.x + Math.sin(yaw) * Math.cos(pitch) * dist, this.camFocus.y + Math.sin(pitch) * dist, this.camFocus.z + Math.cos(yaw) * Math.cos(pitch) * dist);
         look.copy(this.camFocus).add(new THREE.Vector3(0, 0.6, 0));
       }
-      const kp = 1 - Math.exp(-dt * (this.dragging ? 14 : 4.5));
+      const kp = 1 - Math.exp(-dt * (this.dragging ? 14 : this.cameraAngleMode === "fix" ? 8 : 4.5));
       const kl = 1 - Math.exp(-dt * (this.dragging ? 14 : 8));
       this.camPos.lerp(desired, kp);
       this.camLook.lerp(look, kl);
@@ -2644,7 +2776,7 @@ export class Game {
       leaderId: focus ? focus.id : -1,
       finishedCount: this.finishOrder.length,
       holdLeft: this.hold.state === "holding" ? this.hold.timer : -1,
-      dishOpen: this.dish.state === "opening" ? this.dish.d / DISH_HOLE_MAX : this.dish.state === "open" ? 1 : -1,
+      dishOpen: this.dish.state === "opening" || this.dish.state === "sucking" || this.dish.state === "blast" ? Math.max(this.dish.d / DISH_HOLE_MAX, 0.9) : this.dish.state === "open" ? 1 : -1,
       godLeft: Math.max(0, this.godUntil - this.time),
       godCooldown: Math.max(0, this.godReadyAt - this.time),
       clashCount: this.clashCount,
@@ -2668,18 +2800,17 @@ export class Game {
     this.running = false;
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.onResize);
-    this.canvasEl.removeEventListener("pointerdown", this.onPtrDown);
-    window.removeEventListener("pointermove", this.onPtrMove);
-    window.removeEventListener("pointerup", this.onPtrUp);
-    window.removeEventListener("pointercancel", this.onPtrUp);
-    this.scene.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.geometry) m.geometry.dispose();
-      const mat = m.material as THREE.Material | THREE.Material[] | undefined;
-      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-      else if (mat) mat.dispose();
-    });
-    this.composer?.dispose();
-    this.renderer.dispose();
+    try {
+      this.canvasEl.removeEventListener("pointerdown", this.onPtrDown);
+      window.removeEventListener("pointermove", this.onPtrMove);
+      window.removeEventListener("pointerup", this.onPtrUp);
+      window.removeEventListener("pointercancel", this.onPtrUp);
+    } catch { /* ignore */ }
+    try { this.composer?.dispose(); } catch { /* ignore */ }
+    try {
+      this.renderer.forceContextLoss();
+      this.renderer.dispose();
+    } catch { /* ignore */ }
   }
 }
+

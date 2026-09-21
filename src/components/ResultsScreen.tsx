@@ -34,10 +34,10 @@ export default function ResultsScreen({ players, finishers, allBalls = [], onRes
 
   return (
     <div className="absolute inset-0 overflow-y-auto bg-black/70 text-white backdrop-blur-sm">
-      <div className="mx-auto flex min-h-full max-w-lg flex-col justify-center px-4 py-8">
+      <div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-4 py-8">
         <div className="text-center">
           <div className="text-6xl">🏆</div>
-          <h1 className="mt-2 text-2xl font-extrabold sm:text-3xl">ผลการแข่งขัน</h1>
+          <h1 className="mt-2 text-3xl sm:text-4xl font-black">ผลการแข่งขัน</h1>
           {winner && wp ? (
             <div className="mt-3 inline-flex items-center gap-3 rounded-2xl border border-yellow-400/40 bg-yellow-400/10 px-5 py-3">
               <span className="h-8 w-8 rounded-full border-2 border-white/60" style={{ background: slimeGradient(wp.color, wp.color2) }} />
@@ -66,7 +66,7 @@ export default function ResultsScreen({ players, finishers, allBalls = [], onRes
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <div className="rounded-2xl bg-white/5 p-3">
-            <h2 className="mb-2 text-sm font-semibold text-white/70">อันดับผู้เล่น</h2>
+            <h2 className="mb-2 text-base font-bold text-white/70">อันดับผู้เล่น</h2>
             <ul className="space-y-1">
               {score.map((s, i) => (
                 <li key={s.p.id} className="flex items-center gap-2 rounded-lg bg-black/30 px-2 py-1.5 text-sm">
@@ -81,7 +81,7 @@ export default function ResultsScreen({ players, finishers, allBalls = [], onRes
             </ul>
           </div>
           <div className="rounded-2xl bg-white/5 p-3">
-            <h2 className="mb-2 text-sm font-semibold text-white/70">สไลม์ที่ถึงปราสาท (10 อันดับแรก)</h2>
+            <h2 className="mb-2 text-base font-bold text-white/70">สไลม์ที่ถึงปราสาท (10 อันดับแรก)</h2>
             <ul className="space-y-1">
               {finishers.slice(0, 10).map((f) => {
                 const p = byId.get(f.playerId)!;

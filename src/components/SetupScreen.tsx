@@ -68,13 +68,13 @@ export default function SetupScreen({ onStart }: Props) {
 
   return (
     <div className="absolute inset-0 overflow-y-auto bg-gradient-to-b from-sky-900/90 via-emerald-950/95 to-black/95 text-white">
-      <div className="mx-auto flex min-h-full max-w-lg flex-col justify-center px-4 py-8">
+      <div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-4 py-8">
         <div className="text-center">
           <div className="mb-2 text-5xl">🟢</div>
-          <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+          <h1 className="text-3xl sm:text-5xl font-black tracking-tight">
             <span className="bg-gradient-to-r from-lime-300 via-emerald-300 to-sky-300 bg-clip-text text-transparent">Slime Run Adventure</span>
           </h1>
-          <p className="mt-2 text-sm text-white/70">ปล่อยสไลม์ 30 ตัวพร้อมกันวิ่งผ่านเส้นทางผจญภัย RPG ฝ่าหินถล่ม ลาวา กระโดดเหว วาร์ป และอีเวนต์สุ่ม ตัวไหนถึงปราสาทก่อนชนะ!</p>
+          <p className="mt-2 text-sm sm:text-base text-white/80">ปล่อยสไลม์ 30 ตัวพร้อมกันวิ่งผ่านเส้นทางผจญภัย RPG ฝ่าหินถล่ม ลาวา กระโดดเหว วาร์ป และอีเวนต์สุ่ม ตัวไหนถึงปราสาทก่อนชนะ!</p>
         </div>
 
         <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
@@ -143,7 +143,7 @@ export default function SetupScreen({ onStart }: Props) {
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-5 gap-2 text-center text-[11px] text-white/70">
+        <div className="mt-4 grid grid-cols-5 gap-2 text-center text-xs text-white/70">
           {[
             ["🪨", "หินถล่ม"],
             ["🌋", "ลาวาปะทุ"],
@@ -162,15 +162,15 @@ export default function SetupScreen({ onStart }: Props) {
             </div>
           ))}
         </div>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
           <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-amber-100">
             💥 <b>Power Clash</b> — สไลม์ทุกตัวสุ่ม <b>ATK 1‑5</b> ⚔ พุ่งเร็วชนตัวหน้า = ตัวชนพุ่งต่อ ตัวโดนกระเด็นออกข้าง!
           </div>
           <div className="rounded-xl border border-yellow-400/30 bg-yellow-500/10 px-3 py-2 text-yellow-100">
-            ⚡ <b>GOD MODE</b> — ปุ่มพิเศษกดแล้ว 3 ผู้เล่นท้ายสุดสปีด x5 นาน 5 วิ (คูลดาวน์ 20 วิ) · 🖐️ ลากจอหมุนกล้อง 360°
+            ⚡ <b>GOD MODE</b> — เร่ง 10 อันดับสุดท้าย นาน 5 วิ (ความเร็วลดลง 50%) คูลดาวน์ 20 วิ · 🔒 FIX Angle ล็อกมุมแล้วลากจอหมุนเอง
           </div>
         </div>
-        <div className="mt-2 rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2 text-center text-[11px] text-fuchsia-100">
+        <div className="mt-2 rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2 text-center text-xs text-fuchsia-100">
           🎲 <b>Random Events</b> 5 จุด (☄️ อุกกาบาต · 🧊 น้ำแข็ง · 🚧 ประตูกั้น · ⚡ แผ่นเร่ง · 🌩️ ฟ้าผ่า) สุ่มเปิดใช้ต่างกันทุกรอบ
         </div>
 
