@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  overscroll-behavior: none;
+  font-family: "Kanit", system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #000;
+}
+
+@keyframes countdownPop {
+  0% { transform: scale(0.3); opacity: 0; }
+  30% { transform: scale(1.15); opacity: 1; }
+  70% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+.countdown-pop {
+  animation: countdownPop 1s ease-out forwards;
+}
+
+@keyframes toastIn {
+  0% { transform: translateY(20px) scale(0.8); opacity: 0; }
+  15% { transform: translateY(0) scale(1); opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+.toast-in {
+  animation: toastIn 3s ease-out forwards;
+}
+
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+@keyframes eventsIn {
+  0% { transform: translateY(-20px) scale(0.95); opacity: 0; }
+  10% { transform: translateY(0) scale(1); opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+.events-in { animation: eventsIn 7s ease-out forwards; }
+
+@keyframes bubblePop {
+  0% { transform: translate(-50%, 10px) scale(0.6); opacity: 0; }
+  15% { transform: translate(-50%, 0) scale(1.08); opacity: 1; }
+  30% { transform: translate(-50%, 0) scale(1); }
+  80% { opacity: 1; }
+  100% { transform: translate(-50%, -8px) scale(0.95); opacity: 0; }
+}
+.bubble-pop { animation: bubblePop 2.4s ease-out forwards; }
+
+@keyframes godPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0.6); }
+  50% { box-shadow: 0 0 18px 4px rgba(251,191,36,0.35); }
+}
+.god-ready { animation: godPulse 1.4s ease-in-out infinite; }
+.god-btn:disabled { cursor: not-allowed; }
