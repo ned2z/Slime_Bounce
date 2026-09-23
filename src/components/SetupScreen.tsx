@@ -166,8 +166,8 @@ export default function SetupScreen({ onStart }: Props) {
           <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-amber-100">
             💥 <b>Power Clash</b> — สไลม์ทุกตัวสุ่ม <b>ATK 1‑5</b> ⚔ พุ่งเร็วชนตัวหน้า = ตัวชนพุ่งต่อ ตัวโดนกระเด็นออกข้าง!
           </div>
-          <div className="rounded-xl border border-yellow-400/30 bg-yellow-500/10 px-3 py-2 text-yellow-100">
-            ⚡ <b>GOD MODE</b> — เร่ง 10 อันดับสุดท้าย นาน 5 วิ (ความเร็วลดลง 50%) คูลดาวน์ 20 วิ · 🔒 FIX Angle ล็อกมุมแล้วลากจอหมุนเอง
+          <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-rose-100">
+            😡 <b>MAD MODE</b> — อยู่อันดับท้าย 30% นาน 10 วิ → คลั่งอัตโนมัติ! ความเร็ว ×1.2 เป็นเวลา 0.5 วิ (พัก 20 วิ)
           </div>
         </div>
         <div className="mt-2 rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2 text-center text-xs text-fuchsia-100">

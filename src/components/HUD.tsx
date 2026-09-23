@@ -13,7 +13,6 @@ interface Props {
   events: EventDef[];
   markers: ZoneMarker[];
   onEnd: () => void;
-  onGodMode: () => boolean;
   onResetCamera: () => void;
   raceStarted: boolean;
   logs: { id: number; time: number; text: string; color: string }[];
@@ -45,7 +44,6 @@ export default function HUD({
   events,
   markers,
   onEnd,
-  onGodMode,
   onResetCamera,
   raceStarted,
   logs,
@@ -98,9 +96,7 @@ export default function HUD({
   const top = sorted.slice(0, 5);
   const leaderPid = top[0]?.playerId;
 
-  const godLeft = snap?.godLeft ?? 0;
-  const godCd = snap?.godCooldown ?? 0;
-  const godReady = raceStarted && godLeft <= 0 && godCd <= 0;
+  const madLeft = snap?.madLeft ?? 0;
 
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-3 text-white sm:p-5">
@@ -150,7 +146,7 @@ export default function HUD({
                   <span className="text-[11px] text-amber-300" title={`ATK Power: ${b.atk}`}>
                     {"⚔".repeat(Math.min(b.atk, 5))}
                   </span>
-                  {b.godMode && <span className="text-xs animate-bounce">⚡</span>}
+                  {b.madMode && <span className="text-xs animate-bounce">😡</span>}
                   <span className="ml-auto font-mono tabular-nums font-bold text-white/90">
                     {b.finished ? "🏰" : `${Math.round(b.progress * 100)}%`}
                   </span>
@@ -315,7 +311,7 @@ export default function HUD({
               onCameraMode("leader");
               onResetCamera();
             }}
-            className={`flex-1 min-w-[120px] rounded-xl px-4 py-3.5 text-base sm:text-lg font-bold backdrop-blur-md transition active:scale-[0.98] ${
+            className={`rounded-lg px-3 py-2 text-sm font-semibold backdrop-blur-md transition active:scale-[0.98] ${
               cameraMode === "leader"
                 ? "bg-emerald-500/90 text-white shadow-lg shadow-emerald-500/30"
                 : "bg-black/55 text-white/90 hover:bg-black/70 border border-white/10"
@@ -333,7 +329,7 @@ export default function HUD({
           {/* Toggle Camera Angle (AUTO vs FIX) */}
           <button
             onClick={onToggleCameraAngle}
-            className={`rounded-xl px-4 py-3.5 text-base sm:text-lg font-bold backdrop-blur-md border border-white/10 transition active:scale-[0.98] ${
+            className={`rounded-lg px-3 py-2 text-sm font-semibold backdrop-blur-md border border-white/10 transition active:scale-[0.98] ${
               cameraAngleMode === "fix"
                 ? "bg-sky-500/90 text-white shadow-lg shadow-sky-500/30"
                 : "bg-black/55 text-white/90 hover:bg-black/70"
@@ -343,38 +339,11 @@ export default function HUD({
             {cameraAngleMode === "fix" ? "🔒 FIX Angle" : "🔄 AUTO Angle"}
           </button>
 
-          {/* GOD MODE: host only */}
-          {isHost && (
-          <button
-            onClick={() => onGodMode()}
-            disabled={!godReady}
-            className={`god-btn relative flex-1 min-w-[150px] overflow-hidden rounded-xl px-4 py-3.5 text-base sm:text-lg font-black backdrop-blur-md transition active:scale-[0.98] ${
-              godLeft > 0
-                ? "bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 text-black shadow-xl"
-                : godReady
-                ? "god-ready bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 text-white shadow-lg shadow-amber-500/40"
-                : "bg-black/55 text-white/40 border border-white/10"
-            }`}
-            title="เร่งสปีด 10 อันดับสุดท้าย เป็นเวลา 5 วินาที"
-          >
-            {godLeft > 0 ? (
-              <span className="flex items-center justify-center gap-1.5 animate-pulse">
-                ⚡ GOD MODE {godLeft.toFixed(1)}s (10 ตัวท้าย)
-              </span>
-            ) : godCd > 0 ? (
-              <span>⚡ GOD MODE ({Math.ceil(godCd)}s)</span>
-            ) : (
-              <span className="flex items-center justify-center gap-1.5">
-                ⚡ GOD MODE (10 ตัวท้าย)
-              </span>
-            )}
-            {godCd > 0 && godLeft <= 0 && (
-              <span
-                className="absolute inset-y-0 left-0 bg-white/15"
-                style={{ width: `${(1 - godCd / 20) * 100}%` }}
-              />
-            )}
-          </button>
+          {/* MAD MODE indicator (auto skill — shown while the focused slime is mad) */}
+          {madLeft > 0 && (
+            <div className="mad-active flex-1 min-w-[150px] rounded-xl bg-gradient-to-r from-rose-500 via-red-500 to-fuchsia-600 px-4 py-3.5 text-center text-base sm:text-lg font-black text-white shadow-lg shadow-rose-500/40">
+              😡 MAD MODE {madLeft.toFixed(1)}s
+            </div>
           )}
 
           {/* End Race early button — host only */}

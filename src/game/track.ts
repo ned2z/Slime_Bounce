@@ -80,7 +80,7 @@ export const WAYPOINTS: Waypoint[] = [
   { x: 22, y: 46.9, z: -256, zone: "ramp", w: 7 },
   { x: 22, y: 48.5, z: -266, zone: "gap", w: 7 },
   { x: 22, y: 44.5, z: -273, zone: "landing", w: 10 },
-  { x: 22, y: 42.7, z: -291, zone: "plain", w: 7 },
+  { x: 22, y: 42.7, z: -291, zone: "plain", w: 7, event: 4 },
   { x: 22, y: 41.9, z: -301, zone: "dish", w: 10 },
   { x: 22, y: 36.95, z: -303.5, zone: "plain", w: 10 },
   { x: 22, y: 35.65, z: -320, zone: "wind", w: 9 },

@@ -1,0 +1,12 @@
+{
+  "name": "slime-run-relay",
+  "private": true,
+  "version": "1.0.0",
+  "description": "WebSocket relay server for Slime Run Adventure multiplayer",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -5,7 +5,7 @@ import SlimePreview from "./SlimePreview";
 
 interface Props {
   onCreate: (roomName: string, maxPlayers: number, playerName: string, colorIdx: number) => void;
-  onJoin: (code: string, playerName: string, colorIdx: number) => string | null;
+  onJoin: (code: string, playerName: string, colorIdx: number) => string | null | Promise<string | null>;
 }
 
 export default function LobbyHome({ onCreate, onJoin }: Props) {
@@ -16,6 +16,7 @@ export default function LobbyHome({ onCreate, onJoin }: Props) {
   const [colorIdx, setColorIdx] = useState(0);
   const [code, setCode] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
   const rooms = useMemo(() => listPublicRooms(), [tab]);
   const c = SLIME_COLORS[colorIdx];
 
@@ -29,8 +30,12 @@ export default function LobbyHome({ onCreate, onJoin }: Props) {
     const use = (c0 ?? code).trim().toUpperCase();
     if (use.length < 4) return setErr("กรอกรหัสห้อง 4 ตัว");
     if (!playerName.trim()) return setErr("ใส่ชื่อผู้เล่นก่อน");
-    const e = onJoin(use, playerName, colorIdx);
-    setErr(e);
+    setErr(null);
+    setJoining(true);
+    Promise.resolve(onJoin(use, playerName, colorIdx))
+      .then((e) => setErr(e))
+      .catch(() => setErr("เชื่อมต่อห้องไม่สำเร็จ"))
+      .finally(() => setJoining(false));
   };
 
   return (
@@ -41,7 +46,9 @@ export default function LobbyHome({ onCreate, onJoin }: Props) {
           <h1 className="text-3xl font-black sm:text-5xl">
             <span className="bg-gradient-to-r from-lime-300 via-emerald-300 to-sky-300 bg-clip-text text-transparent">Slime Run Lobby</span>
           </h1>
-          <p className="mt-2 text-sm text-white/75 sm:text-base">สร้างห้องแข่งของตัวเอง หรือ Join รหัสห้องเพื่อน — เจ้าของห้องตั้งค่าได้ทั้งหมด</p>
+          <p className="mt-2 text-sm text-white/75 sm:text-base">
+            สร้างห้องแข่งของตัวเอง หรือ Join รหัสห้องเพื่อน — ผู้ที่ Join จะเข้าเป็น<b className="text-sky-300">ผู้ชม</b>ก่อน เจ้าของห้องกด ➕ รับเข้าเล่น
+          </p>
         </div>
 
         <div className="mx-auto mt-5">
@@ -129,8 +136,12 @@ export default function LobbyHome({ onCreate, onJoin }: Props) {
                 className="mt-1 w-full rounded-xl bg-black/30 px-4 py-3 text-center font-mono text-2xl font-black tracking-[0.4em] outline-none ring-sky-400 focus:ring-2"
               />
             </div>
-            <button onClick={() => join()} className="w-full rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 py-4 text-lg font-black">
-              เข้าห้อง
+            <button
+              onClick={() => join()}
+              disabled={joining}
+              className="w-full rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 py-4 text-lg font-black disabled:opacity-50"
+            >
+              {joining ? "กำลังเชื่อมต่อ..." : "เข้าห้อง (เป็นผู้ชม)"}
             </button>
             {rooms.length > 0 && (
               <div>
@@ -153,7 +164,9 @@ export default function LobbyHome({ onCreate, onJoin }: Props) {
                 </div>
               </div>
             )}
-            <p className="text-xs text-white/45">เปิดแท็บ/มือถือเครื่องเดียวกันแล้วใส่รหัสห้องเดียวกันได้ · ผู้ที่ Join เลือกสไลม์ได้อย่างเดียว ไม่มี GOD MODE</p>
+            <p className="text-xs text-white/45">
+              ผู้ที่ Join จะเข้าเป็น<b className="text-sky-300">ผู้ชม</b> (ดูได้อย่างเดียว) — เจ้าของห้องกด ➕ รับเข้าเล่นเป็นผู้เล่นได้ทีละคน
+            </p>
           </div>
         )}
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { slimeGradient, SLIME_COLORS } from "./game/colors";
 import { Game, type BallInfo, type EventDef, type PlayerConfig, type Snapshot, type ZoneMarker } from "./game/Game";
 import HUD from "./components/HUD";
@@ -6,9 +6,14 @@ import ResultsScreen from "./components/ResultsScreen";
 import LobbyHome from "./components/LobbyHome";
 import RoomScreen from "./components/RoomScreen";
 import { RoomBus } from "./lobby/roomBus";
-import type { RoomState } from "./lobby/types";
+import { NetBus } from "./lobby/netBus";
+import type { FinishResult, RoomMember, RoomState } from "./lobby/types";
 
 type Phase = "lobby" | "room" | "race" | "results";
+
+// Cross-device transport is enabled by setting VITE_WS_URL (e.g. on Render/Railway).
+// Unset → RoomBus (BroadcastChannel/localStorage), multiple tabs on one device.
+const WS_URL: string | undefined = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_WS_URL;
 
 interface Toast {
   id: number;
@@ -24,8 +29,8 @@ interface EventLogItem {
 }
 
 export default function App() {
-  const busRef = useRef<RoomBus | null>(null);
-  if (!busRef.current) busRef.current = new RoomBus();
+  const busRef = useRef<RoomBus | NetBus | null>(null);
+  if (!busRef.current) busRef.current = WS_URL ? new NetBus(WS_URL) : new RoomBus();
   const bus = busRef.current;
 
   const [phase, setPhase] = useState<Phase>("lobby");
@@ -48,41 +53,83 @@ export default function App() {
   const [showEvents, setShowEvents] = useState(false);
   const [logs, setLogs] = useState<EventLogItem[]>([]);
   const [crash, setCrash] = useState<string | null>(null);
+  const [netResults, setNetResults] = useState<FinishResult[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
   const finishersRef = useRef<BallInfo[]>([]);
   const timeRef = useRef(0);
+  // NetBus bookkeeping: member order matching PlayerConfig ids, plus the last
+  // roster key / seed so state broadcasts never restart a race in progress.
+  const membersOrderRef = useRef<RoomMember[]>([]);
+  const lastKeyRef = useRef("");
+  const lastSeedRef = useRef(0);
 
   useEffect(() => {
     return bus.subscribe((r) => {
       setRoom(r ? { ...r, members: r.members.map((m) => ({ ...m })) } : null);
       setIsHost(!!r && r.hostId === bus.id);
       if (!r) {
-        setPhase((p) => (p === "room" || p === "race" ? "lobby" : p));
+        setPhase((p) => (p === "room" || p === "race" || p === "results" ? "lobby" : p));
+        lastKeyRef.current = "";
+        lastSeedRef.current = 0;
         return;
       }
-      if (r.phase === "lobby") setPhase((p) => (p === "race" || p === "results" ? p : "room"));
-      if (r.phase === "racing") {
-        const configs: PlayerConfig[] = r.members
-          .filter((m) => m.balls > 0)
-          .map((m, i) => ({
-            id: i,
-            name: m.name,
-            balls: m.balls,
-            color: SLIME_COLORS[m.colorIdx % SLIME_COLORS.length].a,
-            color2: SLIME_COLORS[m.colorIdx % SLIME_COLORS.length].b,
-          }));
-        const idx = r.members.filter((m) => m.balls > 0).findIndex((m) => m.id === bus.id);
-        setPlayers(configs);
-        setMyPlayerId(idx >= 0 ? idx : 0);
-        setIsHost(r.hostId === bus.id);
-        setPhase((p) => {
-          if (p === "race" || p === "results") return p;
-          setRunKey((k) => k + 1);
-          return "race";
-        });
+      if (r.phase === "lobby") {
+        lastKeyRef.current = "";
+        lastSeedRef.current = 0;
+        setPhase((p) => (p === "lobby" ? p : "room"));
+        return;
       }
+      // racing/results: players only (spectators never get a sim)
+      const racing = r.members.filter((m) => m.balls > 0 && !m.spectator);
+      const key = racing.map((m) => `${m.id}:${m.name}:${m.colorIdx}`).join("|");
+      const me = r.members.find((m) => m.id === bus.id);
+      const myIdx = me && !me.spectator ? racing.findIndex((m) => m.id === bus.id) : -1;
+      const configs: PlayerConfig[] = racing.map((m, i) => ({
+        id: i,
+        name: m.name,
+        balls: m.balls,
+        color: SLIME_COLORS[m.colorIdx % SLIME_COLORS.length].a,
+        color2: SLIME_COLORS[m.colorIdx % SLIME_COLORS.length].b,
+      }));
+      if (r.phase === "racing") {
+        const isNewRace = lastSeedRef.current !== r.seed;
+        if (isNewRace || key !== lastKeyRef.current) {
+          lastKeyRef.current = key;
+          lastSeedRef.current = r.seed;
+          membersOrderRef.current = racing;
+          setPlayers(configs);
+          setMyPlayerId(myIdx >= 0 ? myIdx : null);
+          setNetResults([]);
+          if (isNewRace) {
+            setFinishers([]);
+            finishersRef.current = [];
+            setPhase(() => {
+              setRunKey((k) => k + 1);
+              return "race";
+            });
+          }
+        } else {
+          // roster unchanged (e.g. a spectator joined mid-race) — never restart the sim
+          setMyPlayerId(myIdx >= 0 ? myIdx : null);
+        }
+        return;
+      }
+      // phase === "results" (host-authoritative): make sure the roster is
+      // available so late spectators can render the results screen too
+      if (key !== lastKeyRef.current) {
+        lastKeyRef.current = key;
+        membersOrderRef.current = racing;
+        setPlayers(configs);
+        setMyPlayerId(myIdx >= 0 ? myIdx : null);
+      }
+      setPhase((p) => (p === "lobby" ? p : "results"));
     });
+  }, [bus]);
+
+  useEffect(() => {
+    if (!("subscribeResults" in bus)) return;
+    return (bus as NetBus).subscribeResults((rs) => setNetResults(rs));
   }, [bus]);
 
   useEffect(() => {
@@ -129,9 +176,19 @@ export default function App() {
           const text = rank === 1 ? `🏆 ${p.name} #${b.number} ชนะ!` : `🏁 อันดับ ${rank}: ${p.name} #${b.number}`;
           setToasts((t) => [...t.slice(-3), { id, text, color: p.color }]);
           pushLog(text, p.color);
+          // host-authoritative finish times: guests report their own slime,
+          // the host reports its AI slimes — everything else is a local shadow
+          const mem = membersOrderRef.current[b.playerId];
+          if (mem && !mem.spectator && bus instanceof NetBus && (mem.id === bus.id || (host && !!mem.ai))) {
+            bus.reportFinish(mem.id, mem.name, mem.colorIdx, b.finishTime);
+          }
           setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3000);
         },
-        onRaceEnd: () => setPhase("results"),
+        onRaceEnd: () => {
+          // host ends the race for everyone and publishes the merged results
+          if (host && bus instanceof NetBus) bus.publishResults();
+          setPhase("results");
+        },
         onClash: (atk, vic) => {
           const pa = byId.get(atk.playerId)!;
           const pv = byId.get(vic.playerId)!;
@@ -182,7 +239,42 @@ export default function App() {
     gameRef.current?.setCameraAngleMode(cameraAngleMode);
   }, [cameraAngleMode]);
 
-  const winner = finishers[0];
+  // Host-authoritative results: once the host broadcasts the merged finish
+  // times, every device shows results built from that single source of truth
+  // (real guest times override the host's local simulation shadow times).
+  const mergedFinishers = useMemo<BallInfo[]>(() => {
+    const order = membersOrderRef.current;
+    if (!netResults.length || order.length === 0) return finishers;
+    const idxOf = new Map(order.map((m, i) => [m.id, i]));
+    const localByPlayer = new Map<number, BallInfo>();
+    for (const f of finishers) if (!localByPlayer.has(f.playerId)) localByPlayer.set(f.playerId, f);
+    const list: BallInfo[] = [];
+    for (const res of netResults) {
+      const pid = idxOf.get(res.id);
+      if (pid == null) continue;
+      const local = localByPlayer.get(pid);
+      list.push(
+        local
+          ? { ...local, finishTime: res.finishTime }
+          : {
+              id: 1_000_000 + pid,
+              playerId: pid,
+              number: 1,
+              progress: 1,
+              finished: true,
+              finishTime: res.finishTime,
+              rank: 0,
+              atk: 1,
+              clashes: 0,
+              madMode: false,
+            },
+      );
+    }
+    list.sort((a, b) => a.finishTime - b.finishTime);
+    return list.map((f, i) => ({ ...f, rank: i + 1 }));
+  }, [netResults, finishers]);
+
+  const winner = mergedFinishers[0];
   const winnerPlayer = winner ? players.find((p) => p.id === winner.playerId) : undefined;
 
   return (
@@ -214,6 +306,12 @@ export default function App() {
             setPhase("room");
           }}
           onJoin={(code, playerName, colorIdx) => {
+            if (bus instanceof NetBus) {
+              return bus.join(code, playerName, colorIdx).then((err) => {
+                if (!err) setPhase("room");
+                return err;
+              });
+            }
             const err = bus.join(code, playerName, colorIdx);
             if (!err) setPhase("room");
             return err;
@@ -229,6 +327,12 @@ export default function App() {
           onLeave={() => bus.leave()}
           onStart={() => bus.start()}
           onKick={(id) => bus.kick(id)}
+          onAdmitPlayer={(id) => {
+            if (bus instanceof NetBus) bus.admitPlayer(id);
+          }}
+          onToSpectator={(id) => {
+            if (bus instanceof NetBus) bus.demoteToSpectator(id);
+          }}
           onAddAI={() => bus.addAI()}
           onRemoveAI={() => bus.removeAI()}
           onFillAI={() => bus.fillAI()}
@@ -253,7 +357,6 @@ export default function App() {
             markers={markers}
             raceStarted={raceStarted}
             onEnd={() => gameRef.current?.endRace()}
-            onGodMode={() => (isHost ? gameRef.current?.activateGodMode() ?? false : false)}
             onResetCamera={() => gameRef.current?.resetCamera()}
             logs={logs}
             isHost={isHost}
@@ -315,7 +418,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1">
+          <div className="pointer-events-none absolute right-2 top-1/2 flex -translate-y-1/2 flex-col items-end gap-1 sm:right-4">
             {toasts.map((t) => (
               <div key={t.id} className="toast-in rounded-full border px-4 py-2 text-base font-extrabold text-white shadow-lg backdrop-blur sm:text-lg" style={{ background: t.color + "cc", borderColor: t.color }}>
                 {t.text}
@@ -328,12 +431,12 @@ export default function App() {
       {phase === "results" && (
         <ResultsScreen
           players={players}
-          finishers={finishers}
+          finishers={mergedFinishers}
           allBalls={snap?.balls ?? []}
           onReplay={() => {
+            // start a NEW race (fresh seed) and let every device restart its sim
             if (!isHost) return;
-            setRunKey((k) => k + 1);
-            setPhase("race");
+            bus.start();
           }}
           onRestart={() => {
             if (isHost) {

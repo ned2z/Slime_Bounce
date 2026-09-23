@@ -9,7 +9,13 @@ export type RoomMember = {
   ai?: boolean;
   /** Added by host on this device (hot-seat), not a remote tab. */
   local?: boolean;
+  /**
+   * Watch-only member (NetBus mode). Joiners always start as spectators;
+   * the host admits them into the playing roster from the host screen.
+   */
+  spectator?: boolean;
 };
+
 
 export type RoomState = {
   code: string;
@@ -31,4 +37,14 @@ export type BusMsg =
   | { t: "kick"; code: string; id: string }
   | { t: "settings"; code: string; name?: string; maxPlayers?: number }
   | { t: "start"; code: string; seed: number; members: RoomMember[] }
-  | { t: "ended"; code: string };
+  | { t: "ended"; code: string }
+  | { t: "finish"; code: string; id: string; name: string; colorIdx: number; finishTime: number }
+  | { t: "results"; code: string; results: FinishResult[] };
+
+/** One official finish time, merged and published by the host. */
+export type FinishResult = {
+  id: string; // RoomMember id
+  name: string;
+  colorIdx: number;
+  finishTime: number; // seconds (race clock)
+};

@@ -27,7 +27,7 @@ export interface BallInfo {
   rank: number;
   atk: number;
   clashes: number;
-  godMode: boolean;
+  madMode: boolean;
 }
 
 export interface Snapshot {
@@ -37,8 +37,7 @@ export interface Snapshot {
   finishedCount: number;
   holdLeft: number; // seconds remaining on the HOLD barrier, -1 if not holding
   dishOpen: number; // 0..1 how far the dish iris has opened, -1 if idle
-  godLeft: number; // seconds of GOD MODE remaining, 0 if inactive
-  godCooldown: number; // seconds until GOD MODE can be used again
+  madLeft: number; // seconds of MAD MODE remaining on the focused slime, 0 if inactive
   clashCount: number;
 }
 
@@ -94,7 +93,9 @@ interface Ball {
   atk: number; // 1..5 attack power
   clashCd: number;
   clashes: number;
-  godUntil: number;
+  madUntil: number;
+  madStreak: number; // seconds spent in the bottom zone, resets when leaving or triggering
+  madCd: number; // seconds until this slime can trigger MAD again
   aura?: THREE.Mesh;
 }
 
@@ -149,9 +150,10 @@ const FLOOR_T = 0.6;
 const WALL_T = 0.4;
 const PHYS_WALL_H = 7.5; // invisible extra height so balls can't fly out
 const MAX_SPEED = 15;
-const GOD_SPEED = 16;
-const GOD_DURATION = 5;
-const GOD_COOLDOWN = 20;
+const MAD_MULTIPLIER = 1.2;
+const MAD_SPEED = MAX_SPEED * MAD_MULTIPLIER; // speed cap while MAD
+const MAD_DURATION = 0.5; // seconds of MAD MODE
+const MAD_TRIGGER_TIME = 10; // seconds in the bottom-X zone needed to trigger MAD
 const CLASH_MIN_SPEED = 9; // attacker must be faster than this
 const CLASH_REL_SPEED = 3.5; // and closing faster than this
 const HOLD_TIME = 8;
@@ -418,9 +420,6 @@ export class Game {
   private clashFx: ClashFx[] = [];
   private clashTex?: THREE.CanvasTexture;
   private clashCount = 0;
-  private godUntil = 0;
-  private godReadyAt = 0;
-  private godBalls: Ball[] = [];
   private ballById = new Map<number, Ball>();
   // orbit camera (user-controlled)
   private orbitYaw = 0;
@@ -517,7 +516,7 @@ export class Game {
       new CANNON.ContactMaterial(this.ballPhysMat, this.trackPhysMat, { friction: 0.35, restitution: 0.85 })
     );
     this.world.addContactMaterial(
-      new CANNON.ContactMaterial(this.ballPhysMat, this.ballPhysMat, { friction: 0.1, restitution: 0.95 })
+      new CANNON.ContactMaterial(this.ballPhysMat, this.ballPhysMat, { friction: 0.1, restitution: 0.75 })
     );
     this.world.addContactMaterial(
       new CANNON.ContactMaterial(this.ballPhysMat, this.bumperPhysMat, { friction: 0.02, restitution: 0.98 })
@@ -539,15 +538,13 @@ export class Game {
           b.body.applyForce(new CANNON.Vec3(s.right.x * this.windForce, 0, s.right.z * this.windForce));
         }
       }
-      // GOD MODE thrust (50% of original force, last 10 slimes)
-      if (this.godBalls.length) {
-        for (const b of this.godBalls) {
-          if (b.finished) continue;
-          const s = this.segs[b.seg];
-          const v = b.body.velocity;
-          const along = v.x * s.dir.x + v.y * s.dir.y + v.z * s.dir.z;
-          if (along < GOD_SPEED) b.body.applyForce(new CANNON.Vec3(s.dir.x * 30, 0, s.dir.z * 30));
-        }
+      // MAD MODE thrust (x1.2 speed)
+      for (const b of this.balls) {
+        if (b.finished || b.madUntil <= this.time) continue;
+        const s = this.segs[b.seg];
+        const v = b.body.velocity;
+        const along = v.x * s.dir.x + v.y * s.dir.y + v.z * s.dir.z;
+        if (along < MAD_SPEED) b.body.applyForce(new CANNON.Vec3(s.dir.x * 75, 0, s.dir.z * 75));
       }
     });
     this.world.addEventListener("beginContact", (e: { bodyA: CANNON.Body; bodyB: CANNON.Body }) => {
@@ -1239,7 +1236,8 @@ export class Game {
 
   // ---------- random events ----------
   private buildEvent(ev: EventDef) {
-    const s = this.segs.find((x) => x.event === ev.id)!;
+    const s = this.segs.find((x) => x.event === ev.id);
+    if (!s) return; // สนามไม่มี slot สำหรับ event นี้ — ข้ามแทนการ crash
     const postMat = new THREE.MeshStandardMaterial({ color: 0x27272a, metalness: 0.7, roughness: 0.4 });
     const sign = makeEmojiSprite(ev.icon);
     sign.scale.set(2.2, 2.2, 1);
@@ -1366,16 +1364,16 @@ export class Game {
       slime.group.quaternion.copy(s0.quat);
       this.scene.add(slime.group);
       const atk = 1 + Math.floor(Math.random() * 5);
-      const ball: Ball = { id: id++, playerId: v.pid, number: v.num, body, mesh: slime.group, slime, seg: 0, progress: 0, finished: false, finishTime: 0, rank: 0, stuckTimer: 0, warps: 0, boostCd: 0, onNet: false, atk, clashCd: 0, clashes: 0, godUntil: 0 };
+      const ball: Ball = { id: id++, playerId: v.pid, number: v.num, body, mesh: slime.group, slime, seg: 0, progress: 0, finished: false, finishTime: 0, rank: 0, stuckTimer: 0, warps: 0, boostCd: 0, onNet: false, atk, clashCd: 0, clashes: 0, madUntil: 0, madStreak: 0, madCd: 0 };
       // ATK badge stars above head
       const star = makeEmojiSprite(atk >= 5 ? "💥" : atk >= 4 ? "🔥" : atk >= 3 ? "⚔️" : atk >= 2 ? "🗡️" : "🍃", 64);
       star.scale.set(0.42, 0.42, 1);
       star.position.set(0, 0.85, 0);
       slime.group.add(star);
-      // aura ring (hidden until god mode)
+      // aura ring (hidden until MAD mode)
       const aura = new THREE.Mesh(
         new THREE.RingGeometry(0.5, 0.75, 24),
-        new THREE.MeshBasicMaterial({ color: 0xfde047, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })
+        new THREE.MeshBasicMaterial({ color: 0xff4d6d, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })
       );
       aura.rotation.x = -Math.PI / 2;
       aura.position.y = 0.05;
@@ -1446,6 +1444,7 @@ export class Game {
       this.updateWind(dt);
     }
     if (this.raceStarted && !this.raceEnded) {
+      this.updateMad(dt);
       this.updateWarp();
       this.updateHold(dt);
       this.updateDish(dt);
@@ -1454,7 +1453,6 @@ export class Game {
     }
     this.updateBoltsAndMeteorsVisual(dt);
     this.updateClashFx(dt);
-    if (this.godBalls.length && this.time >= this.godUntil) this.godBalls = [];
     this.updateSparks(dt);
     this.updateEmbers(dt);
     this.updateMarkers();
@@ -1545,21 +1543,21 @@ export class Game {
           b.stuckTimer = 0;
         }
       } else b.stuckTimer = 0;
-      const cap = b.godUntil > this.time ? GOD_SPEED : MAX_SPEED;
+      const cap = b.madUntil > this.time ? MAD_SPEED : MAX_SPEED;
       if (speed2 > cap * cap) {
         const f = cap / Math.sqrt(speed2);
         v.scale(f, v);
       }
       b.clashCd = Math.max(0, b.clashCd - dt);
       if (b.aura) {
-        const god = b.godUntil > this.time;
-        b.aura.visible = god;
-        if (god) {
+        const mad = b.madUntil > this.time;
+        b.aura.visible = mad;
+        if (mad) {
           b.aura.position.set(b.mesh.position.x, b.mesh.position.y - BALL_R + 0.08, b.mesh.position.z);
-          b.aura.rotation.z += dt * 6;
-          const pulse = 1 + Math.sin(performance.now() * 0.02) * 0.15;
+          b.aura.rotation.z += dt * 10;
+          const pulse = 1 + Math.sin(performance.now() * 0.03) * 0.18;
           b.aura.scale.setScalar(pulse);
-          if (Math.random() < 0.5) this.burst(b.mesh.position, 1, new THREE.Color(0xfde047));
+          if (Math.random() < 0.5) this.burst(b.mesh.position, 1, new THREE.Color(0xff4d6d));
         }
       }
 
@@ -2499,7 +2497,6 @@ export class Game {
     const rel = (vA.x - vV.x) * nx + (vA.z - vV.z) * nz; // closing speed along contact normal
     const forward = (vA.x * nx + vA.z * nz) / speedA; // attacker moving toward victim?
     if (rel < CLASH_REL_SPEED || forward < 0.5) return;
-    if (vic.godUntil > this.time && atk.godUntil <= this.time) return; // can't clash a god-mode slime
 
     atk.clashCd = 0.8;
     vic.clashCd = 0.4;
@@ -2606,24 +2603,33 @@ export class Game {
     }
   }
 
-  // ---------- GOD MODE ----------
-  /** Give the 3 rearmost players' best slimes (and all their slimes) x5 speed for 5s. */
-  activateGodMode(): boolean {
-    if (!this.raceStarted || this.raceEnded || this.time < this.godReadyAt || this.godBalls.length) return false;
+  // ---------- MAD MODE ----------
+  /** Auto-trigger: a slime that stays in the bottom 30% for 10s goes MAD (x1.2 speed for 0.5s, 20s cooldown). */
+  private updateMad(dt: number) {
     const alive = this.balls.filter((b) => !b.finished);
-    if (!alive.length) return false;
-    // Sort alive slimes by progress ascending (the bottom / rearmost slimes)
-    const sortedAlive = [...alive].sort((a, b) => a.progress - b.progress);
-    this.godBalls = sortedAlive.slice(0, Math.min(10, sortedAlive.length));
-    this.godUntil = this.time + GOD_DURATION;
-    this.godReadyAt = this.time + GOD_COOLDOWN;
-    for (const b of this.godBalls) {
-      b.godUntil = this.godUntil;
-      b.body.applyImpulse(new CANNON.Vec3(this.segs[b.seg].dir.x * 3, 0.5, this.segs[b.seg].dir.z * 3));
-      this.burst(b.mesh.position, 16, new THREE.Color(0xfde047));
+    const n = alive.length;
+    if (!n) return;
+    const x = Math.max(1, Math.floor(n * 0.3)); // trailing 30% of the field
+    const sorted = [...alive].sort((a, b) => b.progress - a.progress);
+    for (let i = 0; i < sorted.length; i++) {
+      const b = sorted[i];
+      b.madCd = Math.max(0, b.madCd - dt);
+      if (b.madUntil > this.time || b.madCd > 0) continue; // mad now or on cooldown
+      if (i >= n - x) {
+        b.madStreak += dt;
+        if (b.madStreak >= MAD_TRIGGER_TIME) {
+          b.madStreak = 0;
+          b.madCd = 20; // long cooldown so notices don't spam
+          b.madUntil = this.time + MAD_DURATION;
+          const p = this.players.find((pl) => pl.id === b.playerId);
+          this.cb.onNotice?.(`😡 Slime #${b.number} (${p?.name ?? "?"}) MAD MODE Active`, "#ff4d6d");
+          this.burst(b.mesh.position, 24, new THREE.Color(0xff4d6d));
+          b.body.applyImpulse(new CANNON.Vec3(this.segs[b.seg].dir.x * 3, 0.5, this.segs[b.seg].dir.z * 3));
+        }
+      } else {
+        b.madStreak = 0;
+      }
     }
-    this.cb.onNotice?.(`⚡ GOD MODE! เร่ง 10 อันดับสุดท้าย นาน 5 วิ`, "#ca8a04");
-    return true;
   }
 
   // ---------- sparks ----------
@@ -2764,7 +2770,7 @@ export class Game {
       rank: b.rank,
       atk: b.atk,
       clashes: b.clashes,
-      godMode: b.godUntil > this.time,
+      madMode: b.madUntil > this.time,
     };
   }
   private emitSnapshot() {
@@ -2777,8 +2783,7 @@ export class Game {
       finishedCount: this.finishOrder.length,
       holdLeft: this.hold.state === "holding" ? this.hold.timer : -1,
       dishOpen: this.dish.state === "opening" || this.dish.state === "sucking" || this.dish.state === "blast" ? Math.max(this.dish.d / DISH_HOLE_MAX, 0.9) : this.dish.state === "open" ? 1 : -1,
-      godLeft: Math.max(0, this.godUntil - this.time),
-      godCooldown: Math.max(0, this.godReadyAt - this.time),
+      madLeft: focus ? Math.max(0, focus.madUntil - this.time) : 0,
       clashCount: this.clashCount,
     });
   }

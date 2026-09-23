@@ -10,6 +10,8 @@ interface Props {
   onLeave: () => void;
   onStart: () => void;
   onKick: (id: string) => void;
+  onAdmitPlayer: (id: string) => void;
+  onToSpectator: (id: string) => void;
   onAddAI: () => void;
   onRemoveAI: () => void;
   onFillAI: () => void;
@@ -26,6 +28,8 @@ export default function RoomScreen({
   onLeave,
   onStart,
   onKick,
+  onAdmitPlayer,
+  onToSpectator,
   onAddAI,
   onRemoveAI,
   onFillAI,
@@ -37,10 +41,13 @@ export default function RoomScreen({
   const [newName, setNewName] = useState("");
   const me = room.members.find((m) => m.id === myId) ?? room.members[0];
   const myColor = SLIME_COLORS[(me?.colorIdx ?? 0) % SLIME_COLORS.length];
-  const used = useMemo(() => new Set(room.members.map((m) => m.colorIdx)), [room.members]);
+  const players = useMemo(() => room.members.filter((m) => !m.spectator), [room.members]);
+  const spectators = useMemo(() => room.members.filter((m) => m.spectator), [room.members]);
+  const amSpectator = !!me?.spectator;
+  const used = useMemo(() => new Set(players.map((m) => m.colorIdx)), [players]);
   const aiCount = room.members.filter((m) => m.ai).length;
-  const full = room.members.length >= room.maxPlayers;
-  const canStart = isHost && room.members.length >= 2;
+  const full = players.length >= room.maxPlayers;
+  const canStart = isHost && players.length >= 2;
 
   const cycleMyColor = () => {
     let idx = me.colorIdx;
@@ -60,7 +67,7 @@ export default function RoomScreen({
             <h1 className="text-2xl font-black sm:text-3xl">{room.name}</h1>
             <div className="mt-1 font-mono text-3xl font-black tracking-[0.35em] text-amber-300">{room.code}</div>
             <p className="mt-1 text-xs text-white/55">
-              แชร์รหัสนี้ให้เพื่อน Join · {room.members.length}/{room.maxPlayers} คน · คนละ 1 สไลม์
+              แชร์รหัสนี้ให้เพื่อน Join · {players.length}/{room.maxPlayers} ผู้เล่น · คนละ 1 สไลม์
             </p>
           </div>
           <button onClick={onLeave} className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold hover:bg-rose-500/30">
@@ -70,7 +77,7 @@ export default function RoomScreen({
 
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="text-center text-xs font-bold uppercase tracking-wider text-white/50">
-            {isHost ? "เจ้าของห้อง — ตั้งค่าได้ทั้งหมด" : "ตัวละครของคุณ (เลือกได้แค่สไลม์)"}
+            {amSpectator ? "คุณเป็นผู้ชม (Watch-only)" : isHost ? "เจ้าของห้อง — ตั้งค่าได้ทั้งหมด" : "ตัวละครของคุณ (เลือกได้แค่สไลม์)"}
           </div>
           <SlimePreview a={myColor.a} b={myColor.b} size={130} />
           <div className="mt-2 text-center text-lg font-black">{me?.name}</div>
@@ -79,7 +86,7 @@ export default function RoomScreen({
           </div>
 
           <div className="mt-3 flex gap-2">
-            {isHost ? (
+            {isHost && !amSpectator ? (
               <input
                 value={me?.name ?? ""}
                 maxLength={14}
@@ -89,14 +96,27 @@ export default function RoomScreen({
             ) : (
               <div className="min-w-0 flex-1 rounded-xl bg-black/20 px-3 py-2.5 text-sm font-semibold text-white/80">{me?.name}</div>
             )}
-            <button onClick={cycleMyColor} className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">
-              เปลี่ยนสี
-            </button>
+            {!amSpectator && (
+              <button onClick={cycleMyColor} className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">
+                เปลี่ยนสี
+              </button>
+            )}
           </div>
-          {!isHost && (
-            <div className="mt-3 rounded-xl bg-emerald-500/80 py-3 text-center text-base font-black">พร้อมแล้ว ✓</div>
+          {amSpectator ? (
+            <div className="mt-3">
+              <div className="rounded-xl bg-sky-500/80 py-3 text-center text-base font-black">
+                👀 ผู้ชม — เจ้าของห้องเป็นคนกด ➕ รับเข้าเล่น
+              </div>
+              <p className="mt-2 text-center text-xs text-sky-200/80">ดูทุกอย่างได้ครบ (ห้อง · การแข่ง · ผลรางวัล) แต่ควบคุมไม่ได้</p>
+            </div>
+          ) : (
+            <>
+              {!isHost && (
+                <div className="mt-3 rounded-xl bg-emerald-500/80 py-3 text-center text-base font-black">พร้อมแล้ว ✓</div>
+              )}
+              {!isHost && <p className="mt-2 text-center text-xs text-amber-200/80">ผู้ที่ Join ดูได้แค่สไลม์ของตัวเอง</p>}
+            </>
           )}
-          {!isHost && <p className="mt-2 text-center text-xs text-amber-200/80">ผู้ที่ Join ดูได้แค่สไลม์ของตัวเอง · ไม่มีปุ่ม GOD MODE</p>}
         </div>
 
         {isHost && (
@@ -114,7 +134,7 @@ export default function RoomScreen({
             </div>
             <input
               type="range"
-              min={Math.max(2, room.members.length)}
+              min={Math.max(2, players.length)}
               max={30}
               value={room.maxPlayers}
               onChange={(e) => onSettings(room.name, parseInt(e.target.value, 10))}
@@ -171,7 +191,7 @@ export default function RoomScreen({
                 disabled={full}
                 className="mt-2 w-full rounded-xl bg-white/15 py-2.5 text-sm font-bold disabled:opacity-30"
               >
-                เติม AI ให้เต็มห้อง ({Math.max(0, room.maxPlayers - room.members.length)} ช่องว่าง)
+                เติม AI ให้เต็มห้อง ({Math.max(0, room.maxPlayers - players.length)} ช่องว่าง)
               </button>
             </div>
           </div>
@@ -211,23 +231,87 @@ export default function RoomScreen({
                     </div>
                   </div>
                   {isHost && !m.isHost && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onKick(m.id);
-                      }}
-                      className="h-9 shrink-0 rounded-lg bg-rose-500 px-3 text-xs font-black text-white hover:bg-rose-400"
-                      title="KICK ออกจากห้อง"
-                    >
-                      KICK
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onToSpectator(m.id);
+                        }}
+                        className="h-9 shrink-0 rounded-lg bg-white/10 px-3 text-xs font-black hover:bg-sky-500/30"
+                        title="ส่งกลับไปเป็นผู้ชม"
+                      >
+                        👀
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onKick(m.id);
+                        }}
+                        className="h-9 shrink-0 rounded-lg bg-rose-500 px-3 text-xs font-black text-white hover:bg-rose-400"
+                        title="KICK ออกจากห้อง"
+                      >
+                        KICK
+                      </button>
+                    </>
                   )}
                 </div>
               );
             })}
           </div>
+
+          {isHost && spectators.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-2 flex items-center justify-between text-sm font-bold">
+                <span className="text-sky-300">ผู้ชม</span>
+                <span className="text-sky-200/70">{spectators.length} คน · ไม่จำกัด</span>
+              </div>
+              <div className="space-y-2">
+                {spectators.map((m) => {
+                  const col = SLIME_COLORS[m.colorIdx % SLIME_COLORS.length];
+                  return (
+                    <div key={m.id} className="flex items-center gap-2 rounded-xl border border-sky-400/20 bg-sky-950/30 p-2">
+                      <span className="h-9 w-9 shrink-0 rounded-full border-2 border-white/30 opacity-70" style={{ background: slimeGradient(col.a, col.b) }} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-bold">
+                          {m.name} {m.id === myId && <span className="text-sky-300"> · คุณ</span>}
+                        </div>
+                        <div className="text-[11px] text-white/50">👀 รอเจ้าของห้องรับเข้าเล่น</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onAdmitPlayer(m.id);
+                        }}
+                        disabled={full}
+                        className="h-9 shrink-0 rounded-lg bg-emerald-500 px-3 text-xs font-black text-white hover:bg-emerald-400 disabled:bg-white/10 disabled:text-white/30"
+                        title={full ? "ผู้เล่นเต็มห้องแล้ว" : "รับเข้าเล่นเป็นผู้เล่น"}
+                      >
+                        ➕ รับเล่น
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onKick(m.id);
+                        }}
+                        className="h-9 shrink-0 rounded-lg bg-rose-500 px-3 text-xs font-black text-white hover:bg-rose-400"
+                        title="KICK ออกจากห้อง"
+                      >
+                        KICK
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {isHost ? (
@@ -236,12 +320,14 @@ export default function RoomScreen({
             disabled={!canStart}
             className="mt-6 w-full rounded-2xl bg-gradient-to-r from-emerald-500 to-sky-500 py-4 text-lg font-black shadow-lg disabled:from-gray-600 disabled:to-gray-700"
           >
-            {!canStart ? "เพิ่ม AI หรือรอเพื่อนอย่างน้อย 2 คน" : "🚀 เริ่มแข่ง"}
+            {!canStart ? "ต้องมีผู้เล่นอย่างน้อย 2 (เพิ่ม AI หรือกด ➕ รับผู้ชม)" : "🚀 เริ่มแข่ง"}
           </button>
         ) : (
-          <div className="mt-6 rounded-2xl bg-white/10 py-4 text-center text-base font-bold text-white/80">รอเจ้าของห้องกดเริ่มแข่ง...</div>
+          <div className="mt-6 rounded-2xl bg-white/10 py-4 text-center text-base font-bold text-white/80">
+            {amSpectator ? "👀 รอเจ้าของห้องรับเข้าเล่น แล้วกดเริ่มแข่ง..." : "รอเจ้าของห้องกดเริ่มแข่ง..."}
+          </div>
         )}
-        <p className="mt-2 text-center text-[11px] text-white/40">1 คน = 1 สไลม์ · GOD MODE ใช้ได้เฉพาะเจ้าของห้อง</p>
+        <p className="mt-2 text-center text-[11px] text-white/40">1 คน = 1 สไลม์ · MAD MODE เกิดอัตโนมัติเมื่ออยู่อันดับท้ายนาน 5 วิ</p>
       </div>
     </div>
   );

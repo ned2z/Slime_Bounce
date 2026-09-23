@@ -1,4 +1,5 @@
 import type { BusMsg, RoomMember, RoomState } from "./types";
+import { SLIME_COLORS } from "../game/colors";
 
 const CH = "slime-run-rooms-v1";
 const LS = "slime-run-room-";
@@ -187,8 +188,8 @@ export class RoomBus {
   nextFreeColor() {
     if (!this.room) return 0;
     const used = new Set(this.room.members.map((m) => m.colorIdx));
-    for (let i = 0; i < 16; i++) if (!used.has(i)) return i;
-    return this.room.members.length % 16;
+    for (let i = 0; i < SLIME_COLORS.length; i++) if (!used.has(i)) return i;
+    return this.room.members.length % SLIME_COLORS.length;
   }
 
   /** Host adds a named player (AI/bot) with a custom name. */
@@ -216,15 +217,7 @@ export class RoomBus {
   addAI(): boolean {
     if (!this.room || !this.isHost()) return false;
     if (this.room.members.length >= this.room.maxPlayers) return false;
-    const used = new Set(this.room.members.map((m) => m.colorIdx));
-    let colorIdx = 0;
-    for (let i = 0; i < 16; i++) {
-      if (!used.has(i)) {
-        colorIdx = i;
-        break;
-      }
-      colorIdx = i;
-    }
+    const colorIdx = this.nextFreeColor();
     const n = this.room.members.filter((m) => m.ai).length + 1;
     const m: RoomMember = {
       id: "ai-" + Math.random().toString(36).slice(2, 9),
