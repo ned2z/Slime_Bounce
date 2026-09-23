@@ -6,9 +6,11 @@ import SlimePreview from "./SlimePreview";
 interface Props {
   onCreate: (roomName: string, maxPlayers: number, playerName: string, colorIdx: number) => void;
   onJoin: (code: string, playerName: string, colorIdx: number) => string | null | Promise<string | null>;
+  /** Which transport App picked — visible so a stale cached build is obvious. */
+  mode?: "online" | "local";
 }
 
-export default function LobbyHome({ onCreate, onJoin }: Props) {
+export default function LobbyHome({ onCreate, onJoin, mode }: Props) {
   const [tab, setTab] = useState<"create" | "join">("create");
   const [roomName, setRoomName] = useState("ห้องสไลม์");
   const [maxPlayers, setMaxPlayers] = useState(8);
@@ -46,6 +48,21 @@ export default function LobbyHome({ onCreate, onJoin }: Props) {
           <h1 className="text-3xl font-black sm:text-5xl">
             <span className="bg-gradient-to-r from-lime-300 via-emerald-300 to-sky-300 bg-clip-text text-transparent">Slime Run Lobby</span>
           </h1>
+          {mode && (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-xs font-bold">
+              {mode === "online" ? (
+                <>
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-lime-400" />
+                  <span className="text-lime-300">โหมดออนไลน์ — ข้ามเครื่องได้</span>
+                </>
+              ) : (
+                <>
+                  <span className="h-2 w-2 rounded-full bg-amber-400" />
+                  <span className="text-amber-300">โหมดเครื่องเดียว — join ข้ามเครื่องไม่ได้</span>
+                </>
+              )}
+            </div>
+          )}
           <p className="mt-2 text-sm text-white/75 sm:text-base">
             สร้างห้องแข่งของตัวเอง หรือ Join รหัสห้องเพื่อน — ผู้ที่ Join จะเข้าเป็น<b className="text-sky-300">ผู้ชม</b>ก่อน เจ้าของห้องกด ➕ รับเข้าเล่น
           </p>

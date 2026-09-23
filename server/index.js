@@ -20,6 +20,10 @@ const rooms = new Map();
 const wsRoom = new Map(); // ws -> room code
 const wsMember = new Map(); // ws -> memberId
 
+function log(...args) {
+  console.log(`[relay ${new Date().toISOString()}]`, ...args);
+}
+
 function send(ws, obj) {
   if (ws && ws.readyState === 1) {
     try {
@@ -60,6 +64,7 @@ function handle(ws, m) {
       if (!code) return;
       if (rooms.has(code)) {
         // extremely unlikely 4-char collision — nudge the host to retry with a new code
+        log(`create REJECTED (code collision) code=${code}`);
         return send(ws, { t: "joinErr", code, error: "รหัสห้องชนกับห้องอื่น ลองสร้างใหม่อีกครั้ง" });
       }
       rooms.set(code, {
@@ -71,6 +76,7 @@ function handle(ws, m) {
       });
       wsRoom.set(ws, code);
       wsMember.set(ws, m.id);
+      log(`create code=${code} host=${m.id} members=${m.room?.members?.length ?? "?"} (rooms=${rooms.size})`);
       return;
     }
 
@@ -79,16 +85,23 @@ function handle(ws, m) {
       // admits them into the playing roster from its own screen. Joining is
       // allowed in any phase (lobby / racing / results) — spectators may watch.
       const target = rooms.get(code);
-      if (!target) return send(ws, { t: "joinErr", code, error: "ไม่พบห้องนี้" });
+      if (!target) {
+        log(`join FAILED (room not found) code=${code} (rooms=${rooms.size}: ${[...rooms.keys()].join(",") || "-"})`);
+        return send(ws, { t: "joinErr", code, error: "ไม่พบห้องนี้" });
+      }
       if (!m.member || typeof m.member.id !== "string") return;
       if (target.memberWs.has(m.member.id)) return send(ws, { t: "joinErr", code, error: "คุณอยู่ในห้องนี้แล้ว" });
-      if (target.hostWs.readyState !== 1) return send(ws, { t: "joinErr", code, error: "เจ้าของห้องออฟไลน์" });
+      if (target.hostWs.readyState !== 1) {
+        log(`join FAILED (host offline) code=${code}`);
+        return send(ws, { t: "joinErr", code, error: "เจ้าของห้องออฟไลน์" });
+      }
       target.conns.add(ws);
       target.memberWs.set(m.member.id, ws);
       wsRoom.set(ws, code);
       wsMember.set(ws, m.member.id);
       target.lastActivity = Date.now();
       // host is authoritative — let it apply the join and broadcast new state
+      log(`join code=${code} member=${m.member.id} "${m.member.name}" (conns=${target.conns.size})`);
       send(target.hostWs, { t: "join", code, member: m.member });
       return;
     }
@@ -184,6 +197,7 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws) => {
+  log(`connection open (clients=${wss.clients.size})`);
   ws.isAlive = true;
   ws.on("pong", () => {
     ws.isAlive = true;
@@ -207,6 +221,7 @@ wss.on("connection", (ws) => {
     if (id) r.memberWs.delete(id);
     if (r.hostWs === ws) {
       // host is gone — the room dies with it
+      log(`host DISCONNECTED — room killed code=${code}`);
       const conns = [...r.conns];
       rooms.delete(code);
       for (const c of conns) {
@@ -214,6 +229,7 @@ wss.on("connection", (ws) => {
         detach(c);
       }
     } else if (id) {
+      log(`leave code=${code} member=${id}`);
       send(r.hostWs, { t: "leave", code, id });
     }
   });

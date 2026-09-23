@@ -132,6 +132,16 @@ export default function App() {
     return (bus as NetBus).subscribeResults((rs) => setNetResults(rs));
   }, [bus]);
 
+  // server rejections without a pending join (e.g. room-code collision on create)
+  useEffect(() => {
+    if (!(bus instanceof NetBus)) return;
+    return bus.subscribeError((text) => {
+      const id = Date.now() + Math.random();
+      setToasts((t) => [...t, { id, text, color: "#f87171" }]);
+      window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
+    });
+  }, [bus]);
+
   useEffect(() => {
     if (phase !== "race" || !canvasRef.current || players.length === 0) return;
     setCountdown(null);
@@ -301,6 +311,7 @@ export default function App() {
 
       {phase === "lobby" && (
         <LobbyHome
+          mode={WS_URL ? "online" : "local"}
           onCreate={(roomName, maxPlayers, playerName, colorIdx) => {
             bus.create(roomName, maxPlayers, playerName, colorIdx);
             setPhase("room");

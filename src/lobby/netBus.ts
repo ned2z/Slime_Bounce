@@ -31,6 +31,7 @@ export class NetBus {
   private room: RoomState | null = null;
   private listeners = new Set<Listener>();
   private resultsListeners = new Set<ResultsListener>();
+  private errorListeners = new Set<(text: string) => void>();
   private resultsMap = new Map<string, FinishResult>();
   private pendingJoin: { code: string; settle: (err: string | null) => void } | null = null;
   private reconnectTimer: number | null = null;
@@ -133,6 +134,18 @@ export class NetBus {
     return () => {
       this.resultsListeners.delete(fn);
     };
+  }
+
+  /** Server-side rejections that are not tied to a pending join (e.g. create collision). */
+  subscribeError(fn: (text: string) => void) {
+    this.errorListeners.add(fn);
+    return () => {
+      this.errorListeners.delete(fn);
+    };
+  }
+
+  private emitError(text: string) {
+    for (const fn of this.errorListeners) fn(text);
   }
 
   create(name: string, maxPlayers: number, hostName: string, colorIdx: number) {
@@ -469,8 +482,13 @@ export class NetBus {
       return;
     }
     if (msg.t === "joinErr") {
-      this.pendingJoin?.settle(msg.error);
-      this.pendingJoin = null;
+      if (this.pendingJoin) {
+        this.pendingJoin.settle(msg.error);
+        this.pendingJoin = null;
+      } else {
+        // rejection for a message without a pending promise (e.g. create) — surface it
+        this.emitError(msg.error);
+      }
       return;
     }
     if (msg.t === "finish" && this.room && this.isHost() && msg.code === this.room.code) {
