@@ -28,6 +28,7 @@ export interface BallInfo {
   atk: number;
   clashes: number;
   madMode: boolean;
+  armorMode?: boolean; // ARMOR skill active (starts with MAD MODE)
 }
 
 export interface Snapshot {
@@ -38,6 +39,7 @@ export interface Snapshot {
   holdLeft: number; // seconds remaining on the HOLD barrier, -1 if not holding
   dishOpen: number; // 0..1 how far the dish iris has opened, -1 if idle
   madLeft: number; // seconds of MAD MODE remaining on the focused slime, 0 if inactive
+  armorLeft: number; // seconds of ARMOR remaining on the focused slime, 0 if inactive
   clashCount: number;
 }
 
@@ -96,7 +98,12 @@ interface Ball {
   madUntil: number;
   madStreak: number; // seconds spent in the bottom zone, resets when leaving or triggering
   madCd: number; // seconds until this slime can trigger MAD again
+  armorUntil: number; // ARMOR active until this sim time (starts with MAD MODE, 2s)
+  wallN: { x: number; y: number; z: number } | null; // last wall contact normal while ARMOR (slide along the wall)
+  wallAt: number; // sim time of the last wall contact
   aura?: THREE.Mesh;
+  armorAura?: THREE.Mesh;
+  armorBubble?: THREE.Mesh;
 }
 
 interface ClashFx {
@@ -154,6 +161,7 @@ const MAD_MULTIPLIER = 1.2;
 const MAD_SPEED = MAX_SPEED * MAD_MULTIPLIER; // speed cap while MAD
 const MAD_DURATION = 0.5; // seconds of MAD MODE
 const MAD_TRIGGER_TIME = 10; // seconds in the bottom-X zone needed to trigger MAD
+const ARMOR_DURATION = 2; // seconds of ARMOR (activates together with MAD MODE)
 const CLASH_MIN_SPEED = 9; // attacker must be faster than this
 const CLASH_REL_SPEED = 3.5; // and closing faster than this
 const HOLD_TIME = 8;
@@ -1364,7 +1372,7 @@ export class Game {
       slime.group.quaternion.copy(s0.quat);
       this.scene.add(slime.group);
       const atk = 1 + Math.floor(Math.random() * 5);
-      const ball: Ball = { id: id++, playerId: v.pid, number: v.num, body, mesh: slime.group, slime, seg: 0, progress: 0, finished: false, finishTime: 0, rank: 0, stuckTimer: 0, warps: 0, boostCd: 0, onNet: false, atk, clashCd: 0, clashes: 0, madUntil: 0, madStreak: 0, madCd: 0 };
+      const ball: Ball = { id: id++, playerId: v.pid, number: v.num, body, mesh: slime.group, slime, seg: 0, progress: 0, finished: false, finishTime: 0, rank: 0, stuckTimer: 0, warps: 0, boostCd: 0, onNet: false, atk, clashCd: 0, clashes: 0, madUntil: 0, madStreak: 0, madCd: 0, armorUntil: 0, wallN: null, wallAt: -1 };
       // ATK badge stars above head
       const star = makeEmojiSprite(atk >= 5 ? "💥" : atk >= 4 ? "🔥" : atk >= 3 ? "⚔️" : atk >= 2 ? "🗡️" : "🍃", 64);
       star.scale.set(0.42, 0.42, 1);
@@ -1380,6 +1388,25 @@ export class Game {
       aura.visible = false;
       this.scene.add(aura);
       ball.aura = aura;
+      // ARMOR: rainbow ring + shield bubble (hidden until the skill activates with MAD MODE)
+      const armorAura = new THREE.Mesh(
+        new THREE.RingGeometry(0.62, 0.92, 28),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      armorAura.rotation.x = -Math.PI / 2;
+      armorAura.position.y = 0.06;
+      armorAura.visible = false;
+      this.scene.add(armorAura);
+      const armorBubble = new THREE.Mesh(
+        new THREE.SphereGeometry(BALL_R * 1.5, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      armorBubble.visible = false;
+      this.scene.add(armorBubble);
+      ball.armorAura = armorAura;
+      ball.armorBubble = armorBubble;
+      // ARMOR: while active, wall contacts slide along the wall instead of bouncing
+      body.addEventListener("collide", (e: { body: CANNON.Body; contact: CANNON.ContactEquation }) => this.onArmorCollide(ball, e));
       this.balls.push(ball);
       this.ballById.set(body.id, ball);
     });
@@ -1548,7 +1575,44 @@ export class Game {
         const f = cap / Math.sqrt(speed2);
         v.scale(f, v);
       }
+      // ARMOR skill: no-bounce — keep charging forward (or slide along a wall)
+      if (b.armorUntil > this.time) {
+        const spd = Math.hypot(v.x, v.z);
+        if (spd > 0.05) {
+          if (b.wallN && this.time - b.wallAt < 0.12) {
+            // recent wall contact — keep velocity tangent to the wall (slide along it)
+            const n = b.wallN;
+            const dot = v.x * n.x + v.z * n.z;
+            v.x -= dot * n.x;
+            v.z -= dot * n.z;
+            const tlen = Math.hypot(v.x, v.z);
+            if (tlen > 0.01) {
+              v.x *= spd / tlen;
+              v.z *= spd / tlen;
+            }
+          } else {
+            v.x = s.dir.x * spd;
+            v.z = s.dir.z * spd;
+          }
+        }
+      }
       b.clashCd = Math.max(0, b.clashCd - dt);
+      if (b.armorAura && b.armorBubble) {
+        const armorOn = b.armorUntil > this.time;
+        b.armorAura.visible = armorOn;
+        b.armorBubble.visible = armorOn;
+        if (armorOn) {
+          const hue = (this.time * 0.6) % 1;
+          (b.armorAura.material as THREE.MeshBasicMaterial).color.setHSL(hue, 1, 0.6);
+          (b.armorBubble.material as THREE.MeshBasicMaterial).color.setHSL((hue + 0.25) % 1, 1, 0.65);
+          b.armorAura.position.set(b.mesh.position.x, b.mesh.position.y - BALL_R + 0.09, b.mesh.position.z);
+          b.armorAura.rotation.z -= dt * 14;
+          b.armorAura.scale.setScalar(1 + Math.sin(performance.now() * 0.02) * 0.12);
+          b.armorBubble.position.copy(b.mesh.position);
+          b.armorBubble.rotation.y += dt * 2;
+          if (Math.random() < 0.35) this.burst(b.mesh.position, 1, new THREE.Color().setHSL((hue + 0.5) % 1, 1, 0.6));
+        }
+      }
       if (b.aura) {
         const mad = b.madUntil > this.time;
         b.aura.visible = mad;
@@ -2603,6 +2667,51 @@ export class Game {
     }
   }
 
+  // ---------- ARMOR ----------
+  /** While ARMOR is active: wall contacts slide along the wall at full speed.
+   *  Bumpers and other slimes are handled by the per-frame projection (plow straight). */
+  private onArmorCollide(b: Ball, e: { body: CANNON.Body; contact: CANNON.ContactEquation }) {
+    if (b.armorUntil <= this.time) return;
+    const other = e.body;
+    const ni = e.contact.ni; // points from bi to bj
+    // orient the normal so it points from the surface toward this ball
+    const sgn = e.contact.bi === b.body ? -1 : 1;
+    const nx = ni.x * sgn, ny = ni.y * sgn, nz = ni.z * sgn;
+    if (Math.abs(ny) > 0.5) return; // floor/ceiling — not a wall
+    if (other.mass > 0 || other.material === this.bumperPhysMat) return; // slimes/bumpers → plow-forward mode
+    const v = b.body.velocity;
+    const into = v.x * nx + v.y * ny + v.z * nz;
+    const spd = Math.hypot(v.x, v.z);
+    b.wallN = { x: nx, y: ny, z: nz };
+    b.wallAt = this.time;
+    if (into < 0) {
+      // remove the into-wall component, keep sliding tangentially at full speed
+      let tx = v.x - into * nx;
+      let tz = v.z - into * nz;
+      const tlen = Math.hypot(tx, tz);
+      if (tlen < 0.5) {
+        // near head-on hit: slide along the track direction projected onto the wall plane
+        const d = this.segs[b.seg].dir;
+        const dn = d.x * nx + d.z * nz;
+        tx = d.x - dn * nx;
+        tz = d.z - dn * nz;
+        const l2 = Math.hypot(tx, tz) || 1;
+        tx = (tx / l2) * spd;
+        tz = (tz / l2) * spd;
+        if (tx * d.x + tz * d.z < 0) {
+          tx = -tx;
+          tz = -tz;
+        }
+      } else {
+        tx = (tx / tlen) * spd;
+        tz = (tz / tlen) * spd;
+      }
+      v.x = tx;
+      v.z = tz;
+      this.burst(b.mesh.position, 4, new THREE.Color(0xffffff));
+    }
+  }
+
   // ---------- MAD MODE ----------
   /** Auto-trigger: a slime that stays in the bottom 30% for 10s goes MAD (x1.2 speed for 0.5s, 20s cooldown). */
   private updateMad(dt: number) {
@@ -2621,8 +2730,10 @@ export class Game {
           b.madStreak = 0;
           b.madCd = 20; // long cooldown so notices don't spam
           b.madUntil = this.time + MAD_DURATION;
+          b.armorUntil = this.time + ARMOR_DURATION; // ARMOR rides along with MAD MODE
           const p = this.players.find((pl) => pl.id === b.playerId);
           this.cb.onNotice?.(`😡 Slime #${b.number} (${p?.name ?? "?"}) MAD MODE Active`, "#ff4d6d");
+          this.cb.onNotice?.(`🛡️ Slime #${b.number} (${p?.name ?? "?"}) ARMOR Active`, "#facc15");
           this.burst(b.mesh.position, 24, new THREE.Color(0xff4d6d));
           b.body.applyImpulse(new CANNON.Vec3(this.segs[b.seg].dir.x * 3, 0.5, this.segs[b.seg].dir.z * 3));
         }
@@ -2771,6 +2882,7 @@ export class Game {
       atk: b.atk,
       clashes: b.clashes,
       madMode: b.madUntil > this.time,
+      armorMode: b.armorUntil > this.time,
     };
   }
   private emitSnapshot() {
@@ -2784,6 +2896,7 @@ export class Game {
       holdLeft: this.hold.state === "holding" ? this.hold.timer : -1,
       dishOpen: this.dish.state === "opening" || this.dish.state === "sucking" || this.dish.state === "blast" ? Math.max(this.dish.d / DISH_HOLE_MAX, 0.9) : this.dish.state === "open" ? 1 : -1,
       madLeft: focus ? Math.max(0, focus.madUntil - this.time) : 0,
+      armorLeft: focus ? Math.max(0, focus.armorUntil - this.time) : 0,
       clashCount: this.clashCount,
     });
   }

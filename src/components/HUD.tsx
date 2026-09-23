@@ -97,6 +97,7 @@ export default function HUD({
   const leaderPid = top[0]?.playerId;
 
   const madLeft = snap?.madLeft ?? 0;
+  const armorLeft = snap?.armorLeft ?? 0;
 
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-3 text-white sm:p-5">
@@ -147,6 +148,7 @@ export default function HUD({
                     {"⚔".repeat(Math.min(b.atk, 5))}
                   </span>
                   {b.madMode && <span className="text-xs animate-bounce">😡</span>}
+                  {b.armorMode && <span className="text-xs" title="ARMOR">🛡️</span>}
                   <span className="ml-auto font-mono tabular-nums font-bold text-white/90">
                     {b.finished ? "🏰" : `${Math.round(b.progress * 100)}%`}
                   </span>
@@ -343,6 +345,19 @@ export default function HUD({
           {madLeft > 0 && (
             <div className="mad-active flex-1 min-w-[150px] rounded-xl bg-gradient-to-r from-rose-500 via-red-500 to-fuchsia-600 px-4 py-3.5 text-center text-base sm:text-lg font-black text-white shadow-lg shadow-rose-500/40">
               😡 MAD MODE {madLeft.toFixed(1)}s
+            </div>
+          )}
+
+          {/* ARMOR indicator (auto skill — starts with MAD MODE, slime slides along walls) */}
+          {armorLeft > 0 && (
+            <div
+              className="flex-1 min-w-[150px] rounded-xl px-4 py-3.5 text-center text-base sm:text-lg font-black text-white"
+              style={{
+                background: "linear-gradient(90deg,#ef4444,#f97316,#facc15,#4ade80,#22d3ee,#818cf8,#e879f9,#ef4444)",
+                boxShadow: "0 10px 15px -3px rgba(250,204,21,0.4)",
+              }}
+            >
+              🛡️ ARMOR {armorLeft.toFixed(1)}s
             </div>
           )}
 
